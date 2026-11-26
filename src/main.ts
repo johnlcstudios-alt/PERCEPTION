@@ -1029,9 +1029,9 @@ const boot = async () => {
         setTimeout(() => { g.requestScreenshot = 'cockpit-shot'; }, 7800);
         setTimeout(() => {
           window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyW' }));
-          /* teleport into downtown for perception test */
+          /* teleport into the Meridian corridor for perception test */
           setTimeout(() => {
-            g.vehicle.reset(350, 250, 0);
+            g.vehicle.reset(-14.25, -800, 0);
           }, 2500);
           setTimeout(() => {
             try {
@@ -1080,7 +1080,7 @@ const boot = async () => {
               try {
                 const def = (g.mission.constructor, MISSIONS[0]);
                 g.startMission(def);
-                g.vehicle.reset(-700, -500, 0);
+                g.vehicle.reset(-10.75, -1470, 0);
                 setTimeout(() => {
                   const m2 = g.mission;
                   const obj = m2.currentObjective();
@@ -1091,9 +1091,9 @@ const boot = async () => {
                     ' vpos=' + v2.pos.x.toFixed(1) + ',' + v2.pos.z.toFixed(1) +
                     ' d=' + d.toFixed(1) + ' cycles=' + g.lidar.cycleCount +
                     ' obj=' + JSON.stringify(obj));
-                  /* POI discovery test: teleport to the control tower */
+                  /* POI discovery test: teleport to the south loop gate */
                   setTimeout(() => {
-                    g.vehicle.reset(-700, -690, 0);
+                    g.vehicle.reset(0, -1520, 0);
                     setTimeout(() => {
                       console.error('[POI] discovered=' + g.profile.discoveredLocations.length + '/' + POIS.length +
                         ' credits=' + g.profile.credits + ' pads=' + g.world.chargePads.length +

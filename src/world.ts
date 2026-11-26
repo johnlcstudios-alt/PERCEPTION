@@ -240,24 +240,24 @@ export class World {
       if (cx >= 0 && cz >= 0 && cx < GRID_N && cz < GRID_N) {
         const cell = cz * GRID_N + cx;
         /* static objects */
-        let id = this.staticHeads[cell];
-        while (id !== -1) {
-          const o = this.objects[id];
+        let slot = this.staticHeads[cell];
+        while (slot !== -1) {
+          const o = this.objects[this.objSlot[slot]];
           const res = this.rayShape(ox, oy, oz, dx, dy, dz, o, bestT);
           if (res !== null && res.t < bestT) {
             bestT = res.t; bestObj = o; bnx = res.nx; bny = res.ny; bnz = res.nz; bmat = o.mat;
           }
-          id = this.objNext[id];
+          slot = this.objNext[slot];
         }
         /* dynamic objects */
-        id = this.dynHeads[cell];
-        while (id !== -1) {
-          const o = this.objects[id];
+        slot = this.dynHeads[cell];
+        while (slot !== -1) {
+          const o = this.objects[this.objSlot[slot]];
           const res = this.rayShape(ox, oy, oz, dx, dy, dz, o, bestT);
           if (res !== null && res.t < bestT) {
             bestT = res.t; bestObj = o; bnx = res.nx; bny = res.ny; bnz = res.nz; bmat = o.mat;
           }
-          id = this.objNext[id];
+          slot = this.objNext[slot];
         }
       }
       /* advance to next cell */
@@ -1004,10 +1004,10 @@ export class World {
       hitObj = o; bnx = nx; bnz = nz;
     };
     for (const cell of cells) {
-      let id = this.staticHeads[cell];
-      while (id !== -1) { testObj(this.objects[id]); id = this.objNext[id]; }
-      id = this.dynHeads[cell];
-      while (id !== -1) { testObj(this.objects[id]); id = this.objNext[id]; }
+      let slot = this.staticHeads[cell];
+      while (slot !== -1) { testObj(this.objects[this.objSlot[slot]]); slot = this.objNext[slot]; }
+      slot = this.dynHeads[cell];
+      while (slot !== -1) { testObj(this.objects[this.objSlot[slot]]); slot = this.objNext[slot]; }
     }
     return { pushX, pushZ, hitObj, nx: bnx, nz: bnz };
   }

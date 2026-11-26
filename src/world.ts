@@ -583,15 +583,16 @@ export class World {
     const r = () => this.rng();
     const SHOULDER = 23; // shoulder centerline (road edge at ±18, rail at ±26)
 
-    /* median jersey barrier (impassable) — opens at the polar tower plaza */
-    for (let z = -1500; z < 1500; z += 50) {
-      if (z >= 1290 && z < 1380) continue;
-      this.addBox('barrier', MAT.CONCRETE, 0, 0.55, z + 25, 50, 1.1, 0.6, 0, { collR: 1.6, tags: ['median'] });
+    /* median jersey barrier (impassable) — 4 m segments so collision is continuous;
+       opens at the polar tower plaza */
+    for (let z = -1500; z < 1500; z += 4) {
+      if (z >= 1288 && z < 1380) continue;
+      this.addBox('barrier', MAT.CONCRETE, 0, 0.55, z + 2, 4, 1.1, 0.6, 0, { collR: 2.2, tags: ['median'] });
     }
     /* guardrails — east side gaps at the rest stop */
-    for (let z = -1500; z < 1500; z += 50) {
-      if (!(z >= -60 && z < 60)) this.addBox('barrier', MAT.METAL, 26, 1.0, z + 25, 50, 1.4, 0.4, 0, { collR: 1.6, tags: ['guardrail'] });
-      this.addBox('barrier', MAT.METAL, -26, 1.0, z + 25, 50, 1.4, 0.4, 0, { collR: 1.6, tags: ['guardrail'] });
+    for (let z = -1500; z < 1500; z += 4) {
+      if (!(z >= -60 && z < 60)) this.addBox('barrier', MAT.METAL, 26, 1.0, z + 2, 4, 1.4, 0.4, 0, { collR: 2.2, tags: ['guardrail'] });
+      this.addBox('barrier', MAT.METAL, -26, 1.0, z + 2, 4, 1.4, 0.4, 0, { collR: 2.2, tags: ['guardrail'] });
     }
     /* light poles, alternating flanks */
     for (let z = -1475; z <= 1475; z += 100) {
@@ -982,10 +983,12 @@ export class World {
       const dx = px - o.x, dz = pz - o.z;
       const rr = radius + o.collR;
       const d2 = dx * dx + dz * dz;
-      if (d2 > rr * rr || d2 < 1e-9) return;
+      if (d2 > rr * rr) return;
+      /* degenerate exact-center contact: push out along +x rather than dividing by zero */
       const d = Math.sqrt(d2);
+      const nx = d < 1e-6 ? 1 : dx / d;
+      const nz = d < 1e-6 ? 0 : dz / d;
       const pen = rr - d;
-      const nx = dx / d, nz = dz / d;
       pushX += nx * pen; pushZ += nz * pen;
       hitObj = o; bnx = nx; bnz = nz;
     };

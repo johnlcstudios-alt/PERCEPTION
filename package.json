@@ -1,7 +1,7 @@
 {
   "name": "perception",
   "productName": "PERCEPTION",
-  "version": "1.0.0",
+  "version": "1.4.0",
   "description": "PERCEPTION - A LiDAR Driving Simulator. You don't see the road. You understand it.",
   "main": "electron/main.cjs",
   "author": "JohnLC Studios Open Source Softwares",

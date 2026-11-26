@@ -1,0 +1,957 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PERCEPTION — A LiDAR Driving Simulator</title>
+<meta name="description" content="PERCEPTION is a LiDAR driving simulator. The world is invisible. Your sensors are your eyes. Drive, scan and upgrade a simulated autonomous vehicle.">
+<meta name="theme-color" content="#04060b">
+<style>
+  :root {
+    --bg: #04060b;
+    --bg-2: #070c14;
+    --panel: rgba(10, 20, 32, 0.72);
+    --line: rgba(83, 230, 255, 0.16);
+    --line-strong: rgba(83, 230, 255, 0.42);
+    --text: #d7e6f2;
+    --muted: #7e93a6;
+    --cyan: #53e6ff;
+    --violet: #9a6bff;
+    --green: #51ffa8;
+    --amber: #ffc24d;
+    --red: #ff4d5e;
+    --mono: "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    --sans: "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+    --max: 1180px;
+    --radius: 14px;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.65;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background-image:
+      linear-gradient(rgba(83, 230, 255, 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(83, 230, 255, 0.035) 1px, transparent 1px);
+    background-size: 54px 54px;
+    mask-image: radial-gradient(ellipse 90% 62% at 50% 0%, #000 20%, transparent 78%);
+    -webkit-mask-image: radial-gradient(ellipse 90% 62% at 50% 0%, #000 20%, transparent 78%);
+  }
+  ::selection { background: var(--cyan); color: #021016; }
+  a { color: var(--cyan); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  img { max-width: 100%; display: block; }
+  h1, h2, h3 { line-height: 1.1; margin: 0; letter-spacing: -0.02em; }
+  p { margin: 0; }
+  code, kbd, .mono { font-family: var(--mono); }
+
+  .skip {
+    position: absolute; left: -9999px; top: 0; z-index: 100;
+    background: var(--cyan); color: #021016; padding: 10px 16px; border-radius: 0 0 8px 0;
+  }
+  .skip:focus { left: 0; }
+
+  .wrap { width: min(var(--max), calc(100% - 44px)); margin: 0 auto; position: relative; z-index: 1; }
+
+  /* ---------- nav ---------- */
+  header.nav {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    background: rgba(4, 6, 11, 0.72);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner {
+    width: min(var(--max), calc(100% - 44px));
+    margin: 0 auto;
+    height: 66px;
+    display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  }
+  .brand { display: flex; align-items: center; gap: 11px; color: var(--text); }
+  .brand:hover { text-decoration: none; }
+  .brand-mark {
+    width: 28px; height: 28px; border-radius: 8px;
+    border: 1px solid var(--line-strong);
+    background:
+      radial-gradient(circle at 30% 30%, rgba(83,230,255,0.55), transparent 45%),
+      radial-gradient(circle at 72% 70%, rgba(154,107,255,0.5), transparent 50%),
+      #08121c;
+    box-shadow: 0 0 18px rgba(83, 230, 255, 0.25);
+    position: relative;
+  }
+  .brand-mark::after {
+    content: ""; position: absolute; inset: 7px;
+    border: 1px solid rgba(83, 230, 255, 0.8); border-radius: 50%;
+    border-right-color: transparent; border-bottom-color: transparent;
+    animation: spin 3.6s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .brand-name { font-family: var(--mono); font-weight: 700; letter-spacing: 0.22em; font-size: 14px; }
+  .brand-name span { color: var(--cyan); }
+  .nav-links { display: flex; align-items: center; gap: 26px; }
+  .nav-links a {
+    color: var(--muted); font-size: 12px; letter-spacing: 0.14em;
+    text-transform: uppercase; font-family: var(--mono);
+  }
+  .nav-links a:hover { color: var(--cyan); text-decoration: none; }
+  .nav-cta {
+    display: inline-flex; align-items: center; gap: 8px;
+    border: 1px solid var(--line-strong); color: var(--cyan);
+    padding: 8px 14px; border-radius: 8px; font-family: var(--mono);
+    font-size: 11px; letter-spacing: 0.12em; white-space: nowrap;
+    background: rgba(83, 230, 255, 0.06);
+    transition: background 0.15s, box-shadow 0.15s;
+  }
+  .nav-cta:hover { background: rgba(83, 230, 255, 0.14); box-shadow: 0 0 22px rgba(83,230,255,0.2); text-decoration: none; }
+
+  /* ---------- buttons ---------- */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+    font-family: var(--mono); font-size: 12px; font-weight: 600;
+    letter-spacing: 0.14em; text-transform: uppercase;
+    padding: 14px 22px; border-radius: 9px; border: 1px solid transparent;
+    transition: transform 0.15s, box-shadow 0.15s, background 0.15s, border-color 0.15s;
+    cursor: pointer;
+  }
+  .btn:hover { text-decoration: none; transform: translateY(-1px); }
+  .btn-primary {
+    background: var(--cyan); color: #021016;
+    box-shadow: 0 0 0 1px rgba(83,230,255,0.4), 0 10px 40px rgba(83, 230, 255, 0.22);
+  }
+  .btn-primary:hover { box-shadow: 0 0 0 1px rgba(83,230,255,0.6), 0 14px 48px rgba(83, 230, 255, 0.32); }
+  .btn-ghost { border-color: var(--line-strong); color: var(--text); background: rgba(10, 20, 32, 0.5); }
+  .btn-ghost:hover { border-color: var(--cyan); color: var(--cyan); }
+
+  /* ---------- hero ---------- */
+  .hero {
+    position: relative; min-height: clamp(640px, 92vh, 880px);
+    display: flex; align-items: center;
+    overflow: hidden; border-bottom: 1px solid var(--line);
+  }
+  #hero-canvas {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    z-index: 0; opacity: 0.95;
+  }
+  .hero::after {
+    content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+    background:
+      radial-gradient(ellipse 55% 55% at 62% 48%, transparent 0%, rgba(4,6,11,0.35) 58%, rgba(4,6,11,0.92) 100%),
+      linear-gradient(180deg, rgba(4,6,11,0.55) 0%, transparent 26%, transparent 70%, var(--bg) 100%);
+  }
+  .hero .wrap { z-index: 2; padding: 120px 0 96px; }
+  .hero-copy { max-width: 720px; }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 10px;
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.2em;
+    text-transform: uppercase; color: var(--cyan);
+    border: 1px solid var(--line-strong); border-radius: 999px;
+    padding: 7px 14px; margin-bottom: 26px;
+    background: rgba(83, 230, 255, 0.05);
+  }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  h1.hero-title {
+    font-size: clamp(46px, 7.2vw, 92px);
+    font-weight: 800; letter-spacing: -0.045em; text-transform: uppercase;
+    color: #f2fbff;
+    text-shadow: 0 0 60px rgba(83, 230, 255, 0.16);
+  }
+  h1.hero-title .line2 {
+    display: block; color: transparent;
+    -webkit-text-stroke: 1px rgba(83, 230, 255, 0.72);
+    text-shadow: 0 0 44px rgba(83, 230, 255, 0.2);
+  }
+  .hero-sub {
+    margin-top: 24px; max-width: 600px;
+    color: var(--muted); font-size: clamp(15px, 1.5vw, 18px); line-height: 1.7;
+  }
+  .hero-sub strong { color: var(--text); font-weight: 600; }
+  .hero-tag {
+    margin-top: 16px; font-family: var(--mono); font-size: 12px;
+    letter-spacing: 0.16em; color: var(--cyan); text-transform: uppercase;
+  }
+  .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 36px; }
+  .hero-meta {
+    display: flex; flex-wrap: wrap; gap: 22px; margin-top: 34px;
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em;
+    color: var(--muted); text-transform: uppercase;
+  }
+  .hero-meta span { display: flex; align-items: center; gap: 8px; }
+  .hero-meta i { width: 4px; height: 4px; border-radius: 50%; background: var(--cyan); display: inline-block; }
+  .hero-scroll {
+    position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%);
+    z-index: 3; font-family: var(--mono); font-size: 10px; letter-spacing: 0.22em;
+    color: var(--muted); text-transform: uppercase; display: flex; flex-direction: column;
+    align-items: center; gap: 8px;
+  }
+  .hero-scroll::after {
+    content: ""; width: 1px; height: 30px;
+    background: linear-gradient(var(--cyan), transparent);
+    animation: drop 2s ease-in-out infinite;
+  }
+  @keyframes drop { 0% { transform: scaleY(0); transform-origin: top; } 55% { transform: scaleY(1); transform-origin: top; } 100% { transform: scaleY(1); opacity: 0; } }
+
+  /* ---------- sections ---------- */
+  section { position: relative; padding: 92px 0; }
+  section + section { border-top: 1px solid rgba(83, 230, 255, 0.08); }
+  .section-head { max-width: 720px; margin-bottom: 48px; }
+  .kicker {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.24em;
+    text-transform: uppercase; color: var(--cyan); margin-bottom: 16px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .kicker::before { content: ""; width: 26px; height: 1px; background: var(--cyan); display: inline-block; }
+  h2.section-title { font-size: clamp(30px, 4vw, 46px); font-weight: 800; text-transform: uppercase; letter-spacing: -0.035em; }
+  .section-desc { margin-top: 16px; color: var(--muted); font-size: 16px; max-width: 640px; }
+
+  /* ---------- stats ---------- */
+  .stats {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
+    background: var(--line); border: 1px solid var(--line); border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .stat { background: var(--bg-2); padding: 30px 24px; }
+  .stat b {
+    display: block; font-family: var(--mono); font-size: clamp(28px, 3.4vw, 40px);
+    color: #f2fbff; letter-spacing: -0.03em; line-height: 1;
+  }
+  .stat b em { font-style: normal; color: var(--cyan); }
+  .stat span {
+    display: block; margin-top: 10px; font-family: var(--mono);
+    font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted);
+  }
+
+  /* ---------- screenshot ---------- */
+  .shot-frame {
+    position: relative; border: 1px solid var(--line-strong);
+    border-radius: var(--radius); overflow: hidden;
+    background: #02040a; box-shadow: 0 40px 120px rgba(0, 0, 0, 0.6), 0 0 80px rgba(83, 230, 255, 0.08);
+  }
+  .shot-frame::before {
+    content: "LIVE SENSOR FEED — MERIDIAN SECTOR";
+    position: absolute; top: 0; left: 0; z-index: 2;
+    font-family: var(--mono); font-size: 9px; letter-spacing: 0.2em;
+    color: var(--cyan); background: rgba(4,6,11,0.8);
+    border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
+    padding: 7px 12px;
+  }
+  .shot-frame img { width: 100%; filter: saturate(1.06) contrast(1.04); }
+  .shot-caption {
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+    padding: 14px 18px; border-top: 1px solid var(--line);
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em;
+    color: var(--muted); text-transform: uppercase; background: var(--bg-2);
+  }
+  .shot-caption span:last-child { color: var(--cyan); }
+
+  /* ---------- feature grid ---------- */
+  .grid { display: grid; gap: 16px; }
+  .grid.features { grid-template-columns: repeat(3, 1fr); }
+  .card {
+    position: relative; background: linear-gradient(160deg, rgba(12, 23, 37, 0.9), rgba(6, 11, 18, 0.9));
+    border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 28px 26px; overflow: hidden;
+    transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+  }
+  .card::after {
+    content: ""; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+    opacity: 0; transition: opacity 0.2s;
+  }
+  .card:hover { border-color: var(--line-strong); transform: translateY(-3px); box-shadow: 0 18px 50px rgba(0,0,0,0.35); }
+  .card:hover::after { opacity: 0.7; }
+  .card-icon {
+    width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center;
+    background: rgba(83, 230, 255, 0.08); border: 1px solid var(--line);
+    color: var(--cyan); margin-bottom: 18px;
+  }
+  .card-icon svg { width: 19px; height: 19px; }
+  .card h3 { font-size: 15px; letter-spacing: 0.06em; text-transform: uppercase; font-family: var(--mono); margin-bottom: 10px; }
+  .card p { color: var(--muted); font-size: 14px; line-height: 1.65; }
+  .card .num {
+    position: absolute; top: 18px; right: 20px;
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; color: rgba(126, 147, 166, 0.5);
+  }
+
+  /* ---------- pipeline ---------- */
+  .pipeline { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+  .pipe {
+    position: relative; border: 1px solid var(--line); border-radius: 10px;
+    background: rgba(9, 17, 28, 0.8); padding: 20px 16px; min-height: 132px;
+  }
+  .pipe::after {
+    content: "→"; position: absolute; right: -13px; top: 50%; transform: translateY(-50%);
+    color: var(--cyan); font-family: var(--mono); z-index: 2; opacity: 0.7;
+  }
+  .pipe:last-child::after { display: none; }
+  .pipe-step { font-family: var(--mono); font-size: 9px; letter-spacing: 0.2em; color: var(--cyan); }
+  .pipe h4 { margin: 10px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; font-family: var(--mono); }
+  .pipe p { font-size: 12px; color: var(--muted); line-height: 1.55; }
+
+  /* ---------- modes ---------- */
+  .modes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .mode {
+    border: 1px solid var(--line); border-radius: 10px; padding: 18px;
+    background: rgba(9, 17, 28, 0.72); display: flex; gap: 14px; align-items: flex-start;
+  }
+  .mode-key {
+    font-family: var(--mono); font-size: 11px; color: #021016; background: var(--cyan);
+    border-radius: 5px; width: 24px; height: 24px; display: grid; place-items: center;
+    flex: 0 0 auto; font-weight: 700;
+  }
+  .mode h4 { font-family: var(--mono); font-size: 12px; letter-spacing: 0.08em; margin: 2px 0 4px; }
+  .mode p { font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+  /* ---------- tech stack ---------- */
+  .stack-layout { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 42px; align-items: start; }
+  .stack-table { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .stack-row {
+    display: grid; grid-template-columns: 160px 1fr; gap: 16px;
+    padding: 13px 18px; border-bottom: 1px solid rgba(83, 230, 255, 0.08);
+    font-size: 13px;
+  }
+  .stack-row:last-child { border-bottom: none; }
+  .stack-row:nth-child(odd) { background: rgba(9, 17, 28, 0.6); }
+  .stack-row dt { font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; color: var(--cyan); text-transform: uppercase; padding-top: 3px; }
+  .stack-row dd { margin: 0; color: var(--muted); }
+  .stack-row dd b { color: var(--text); font-weight: 600; }
+  .stack-notes { display: flex; flex-direction: column; gap: 14px; }
+  .note {
+    border-left: 2px solid var(--line-strong); padding: 4px 0 4px 18px;
+    color: var(--muted); font-size: 14px;
+  }
+  .note b { color: var(--text); display: block; font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 4px; }
+
+  /* ---------- docs ---------- */
+  .doc-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .doc {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    border: 1px solid var(--line); border-radius: 9px; padding: 16px 18px;
+    background: rgba(9, 17, 28, 0.7); color: var(--text); transition: border-color 0.15s, background 0.15s;
+  }
+  .doc:hover { text-decoration: none; border-color: var(--line-strong); background: rgba(83, 230, 255, 0.05); }
+  .doc span { font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; }
+  .doc small { display: block; color: var(--muted); font-size: 10px; margin-top: 3px; letter-spacing: 0.08em; }
+  .doc i { color: var(--cyan); font-style: normal; font-family: var(--mono); }
+
+  /* ---------- download ---------- */
+  .download-card {
+    border: 1px solid var(--line-strong); border-radius: var(--radius);
+    background:
+      radial-gradient(ellipse 70% 120% at 20% 0%, rgba(83, 230, 255, 0.12), transparent 55%),
+      radial-gradient(ellipse 60% 100% at 85% 100%, rgba(154, 107, 255, 0.12), transparent 55%),
+      rgba(8, 15, 24, 0.9);
+    padding: 46px;
+    display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 38px; align-items: center;
+  }
+  .download-card h2 { font-size: clamp(28px, 3.6vw, 42px); text-transform: uppercase; font-weight: 800; }
+  .download-card h2 span { color: var(--cyan); }
+  .download-card p { margin-top: 14px; color: var(--muted); font-size: 14px; max-width: 460px; }
+  .download-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
+  .terminal {
+    background: #02050a; border: 1px solid var(--line); border-radius: 10px;
+    overflow: hidden; font-family: var(--mono); font-size: 12px;
+  }
+  .terminal-bar {
+    display: flex; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--line);
+    background: rgba(9, 17, 28, 0.9);
+  }
+  .terminal-bar i { width: 8px; height: 8px; border-radius: 50%; background: #24303d; display: block; }
+  .terminal-bar i:first-child { background: var(--red); opacity: 0.7; }
+  .terminal-bar i:nth-child(2) { background: var(--amber); opacity: 0.7; }
+  .terminal-bar i:nth-child(3) { background: var(--green); opacity: 0.7; }
+  .terminal pre { margin: 0; padding: 18px 16px; color: #b8cbd9; overflow-x: auto; line-height: 1.8; }
+  .terminal .c { color: #4d6478; }
+  .terminal .g { color: var(--green); }
+  .terminal .b { color: var(--cyan); }
+
+  /* ---------- footer ---------- */
+  footer {
+    border-top: 1px solid var(--line); padding: 46px 0 34px;
+    position: relative; z-index: 1; background: #03050a;
+  }
+  .foot-top { display: flex; justify-content: space-between; gap: 30px; flex-wrap: wrap; }
+  .foot-brand { max-width: 360px; }
+  .foot-brand p { color: var(--muted); font-size: 13px; margin-top: 12px; }
+  .foot-cols { display: flex; gap: 64px; flex-wrap: wrap; }
+  .foot-col h5 {
+    margin: 0 0 12px; font-family: var(--mono); font-size: 10px;
+    letter-spacing: 0.18em; text-transform: uppercase; color: var(--cyan);
+  }
+  .foot-col a { display: block; color: var(--muted); font-size: 13px; padding: 3px 0; }
+  .foot-col a:hover { color: var(--text); text-decoration: none; }
+  .foot-bottom {
+    display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+    border-top: 1px solid rgba(83, 230, 255, 0.08); margin-top: 36px; padding-top: 22px;
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em;
+    color: #536475; text-transform: uppercase;
+  }
+
+  /* ---------- reveal ---------- */
+  .reveal { opacity: 0; transform: translateY(18px); transition: opacity 0.6s ease, transform 0.6s ease; }
+  .reveal.in { opacity: 1; transform: none; }
+
+  @media (max-width: 980px) {
+    .grid.features { grid-template-columns: repeat(2, 1fr); }
+    .pipeline { grid-template-columns: repeat(3, 1fr); }
+    .pipe:nth-child(3)::after { display: none; }
+    .modes { grid-template-columns: repeat(2, 1fr); }
+    .stack-layout, .download-card { grid-template-columns: 1fr; }
+    .doc-grid { grid-template-columns: repeat(2, 1fr); }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .nav-links { display: none; }
+  }
+  @media (max-width: 640px) {
+    .wrap, .nav-inner { width: calc(100% - 28px); }
+    .grid.features, .modes, .doc-grid { grid-template-columns: 1fr; }
+    .pipeline { grid-template-columns: 1fr 1fr; }
+    .pipe::after { display: none; }
+    .stats { grid-template-columns: 1fr 1fr; }
+    .download-card { padding: 28px 22px; }
+    .hero .wrap { padding: 96px 0 80px; }
+    .hero-actions .btn { width: 100%; }
+    section { padding: 68px 0; }
+    .foot-cols { gap: 36px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+    #hero-canvas { display: none; }
+    .reveal { opacity: 1; transform: none; }
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="#top" aria-label="PERCEPTION home">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">PERCEPT<span>ION</span></span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="#features">Features</a>
+      <a href="#pipeline">Pipeline</a>
+      <a href="#modes">Modes</a>
+      <a href="#stack">Tech Stack</a>
+      <a href="#docs">Docs</a>
+    </nav>
+    <a class="nav-cta" href="#download">GET PERCEPTION</a>
+  </div>
+</header>
+
+<main id="main">
+  <div id="top"></div>
+
+  <!-- ================= HERO ================= -->
+  <section class="hero" aria-labelledby="hero-title">
+    <canvas id="hero-canvas" aria-hidden="true"></canvas>
+    <div class="wrap">
+      <div class="hero-copy">
+        <div class="eyebrow"><span class="dot"></span> LiDAR Driving Simulator · v1.4.0</div>
+        <h1 class="hero-title" id="hero-title">
+          You don't see the road.
+          <span class="line2">You understand it.</span>
+        </h1>
+        <p class="hero-sub">
+          The world is fully modeled in 3D — but never rendered as ordinary geometry.
+          An onboard simulated LiDAR scans it, and the road exists for you only as a
+          <strong>living point cloud</strong>. Real occlusion. Measurement noise. Range limits.
+          Processing latency. Object recognition.
+        </p>
+        <p class="hero-tag">Scan · Perceive · Drive · Upgrade · Go autonomous</p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="#download">Download for Windows</a>
+          <a class="btn btn-ghost" href="#features">Explore features</a>
+          <a class="btn btn-ghost" href="#docs">Read the docs</a>
+        </div>
+        <div class="hero-meta">
+          <span><i></i> Electron + three.js</span>
+          <span><i></i> 18 missions · 6 districts</span>
+          <span><i></i> MIT open source</span>
+        </div>
+      </div>
+    </div>
+    <div class="hero-scroll" aria-hidden="true">Scroll</div>
+  </section>
+
+  <!-- ================= STATS ================= -->
+  <div class="wrap" style="padding-top:0;">
+    <div class="stats reveal" style="margin-top:-46px; position:relative; z-index:3;">
+      <div class="stat"><b>7</b><span>LiDAR sensor tiers</span></div>
+      <div class="stat"><b>7</b><span>Visualization modes</span></div>
+      <div class="stat"><b><em>18</em></b><span>Campaign missions</span></div>
+      <div class="stat"><b>6</b><span>Autonomy modes</span></div>
+    </div>
+  </div>
+
+  <!-- ================= SCREENSHOT ================= -->
+  <section aria-labelledby="shot-title">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <div class="kicker">Sensor feed</div>
+        <h2 class="section-title" id="shot-title">A city made of measurements</h2>
+        <p class="section-desc">
+          Buildings, traffic, pedestrians and weather all physically exist in the simulation —
+          but you only ever see their returns. Objects hide what is behind them.
+        </p>
+      </div>
+      <figure class="shot-frame reveal" style="margin:0;">
+        <img src="../docs/screenshot.png" alt="PERCEPTION gameplay: a LiDAR point cloud reconstruction of a city street with the driving HUD" loading="lazy" width="1600" height="900">
+        <figcaption class="shot-caption">
+          <span>Point Cloud · Meridian Sector · Clear weather</span>
+          <span>Real-time sensor view</span>
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ================= FEATURES ================= -->
+  <section id="features" aria-labelledby="features-title">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <div class="kicker">01 — Systems</div>
+        <h2 class="section-title" id="features-title">Perception is the game</h2>
+        <p class="section-desc">
+          Every system is built around one idea: driving with incomplete, delayed, noisy
+          information — and getting better sensors instead of better eyes.
+        </p>
+      </div>
+      <div class="grid features">
+        <article class="card reveal">
+          <span class="num">01</span>
+          <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="2.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg></div>
+          <h3>Real LiDAR pipeline</h3>
+          <p>Scan generator → environment raycasts → measurement processor (noise, dropout, reflectivity, weather) → latency queue → pooled point-cloud renderer. Occlusion is exact, not faked.</p>
+        </article>
+        <article class="card reveal">
+          <span class="num">02</span>
+          <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 17l5-5 4 3 4-6 5 4"/><path d="M3 21h18"/><circle cx="8" cy="12" r="1.2"/><circle cx="12" cy="15" r="1.2"/><circle cx="16" cy="9" r="1.2"/></svg></div>
+          <h3>7 visualization modes</h3>
+          <p>Point Cloud, Distance, Height, Intensity, Detection, Semantic and Wireframe. Advanced modes unlock through the research tree — each reveals a different layer of the same scan.</p>
+        </article>
+        <article class="card reveal">
+          <span class="num">03</span>
+          <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h4M7 14h7M17 9v6"/></svg></div>
+          <h3>7 sensor tiers</h3>
+          <p>From the LDR-100 BASIC at 60 m and 8 channels to the LDR-X EXPERIMENTAL at 280 m and 64 channels. Frequency, range, density, noise and latency all change how the world appears.</p>
+        </article>
+        <article class="card reveal">
+          <span class="num">04</span>
+          <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 16a8 8 0 0116 0"/><circle cx="12" cy="17" r="2.5"/><path d="M12 6v3M5 9l2 2M19 9l-2 2"/></svg></div>
+          <h3>Autonomy that feels real</h3>
+          <p>Six assistance levels consume only perception output. When road confidence drops, the car slows and stops. It never cheats with ground truth — it asks you to take over.</p>
+        </article>
+        <article class="card reveal">
+          <span class="num">05</span>
+          <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 20h18M5 20V9l7-5 7 5v11"/><path d="M9 20v-5h6v5"/><path d="M9 10h.01M15 10h.01"/></svg></div>
+          <h3>A living city</h3>
+          <p>Six districts, traffic, trucks, pedestrians, traffic lights, rain, heavy rain, fog, dust, a day/night cycle and random dynamic events — all of which degrade the sensor physically.</p>
+        </article>
+        <article class="card reveal">
+          <span class="num">06</span>
+          <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 3v18M5 8l7-5 7 5M5 16l7 5 7-5"/><circle cx="12" cy="12" r="3"/></svg></div>
+          <h3>Deep progression</h3>
+          <p>Earn credits and research data, buy five vehicles, eight upgrade categories, auxiliary radar/camera/ultrasonic pods, and unlock the full autonomy stack.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= PIPELINE ================= -->
+  <section id="pipeline" aria-labelledby="pipeline-title">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <div class="kicker">02 — Under the hood</div>
+        <h2 class="section-title" id="pipeline-title">Five stages, one truth</h2>
+        <p class="section-desc">
+          The renderer never draws the world directly. Everything you see travels through the
+          same pipeline a real sensor stack would use.
+        </p>
+      </div>
+      <div class="pipeline reveal">
+        <div class="pipe"><div class="pipe-step">STAGE 01</div><h4>Scan</h4><p>Rotating azimuth and vertical channels produce a full 360° sweep at the sensor's rate.</p></div>
+        <div class="pipe"><div class="pipe-step">STAGE 02</div><h4>Raycast</h4><p>Thousands of rays traverse a 16 m spatial hash of analytic boxes, cylinders, spheres and ground.</p></div>
+        <div class="pipe"><div class="pipe-step">STAGE 03</div><h4>Measure</h4><p>Dropout, range noise, reflectivity, weather degradation and obstruction damage are applied.</p></div>
+        <div class="pipe"><div class="pipe-step">STAGE 04</div><h4>Delay</h4><p>Points and object snapshots enter a latency queue; perception receives data milliseconds late.</p></div>
+        <div class="pipe"><div class="pipe-step">STAGE 05</div><h4>Render</h4><p>A GPU ring buffer draws up to 450k points with age fade and mode-based colorization.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= MODES ================= -->
+  <section id="modes" aria-labelledby="modes-title">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <div class="kicker">03 — Visualization</div>
+        <h2 class="section-title" id="modes-title">Seven ways to see</h2>
+        <p class="section-desc">Cycle with <kbd>V</kbd> or jump directly with <kbd>1</kbd>–<kbd>7</kbd>. Unlock the advanced views in the Research Lab.</p>
+      </div>
+      <div class="modes">
+        <div class="mode reveal"><span class="mode-key">1</span><div><h4>POINT CLOUD</h4><p>The raw scan. Intensity-tinted returns with distance fades.</p></div></div>
+        <div class="mode reveal"><span class="mode-key">2</span><div><h4>DISTANCE</h4><p>A red-to-blue range map from the sensor origin.</p></div></div>
+        <div class="mode reveal"><span class="mode-key">3</span><div><h4>HEIGHT</h4><p>Elevation bands reveal curbs, walls and overhead structures.</p></div></div>
+        <div class="mode reveal"><span class="mode-key">4</span><div><h4>INTENSITY</h4><p>Material reflectivity — bright road paint and signs stand out.</p></div></div>
+        <div class="mode reveal"><span class="mode-key">5</span><div><h4>DETECTION</h4><p>Tracked objects with 3D bounding boxes and confidence colors.</p></div></div>
+        <div class="mode reveal"><span class="mode-key">6</span><div><h4>SEMANTIC</h4><p>Every return colored by recognized material class.</p></div></div>
+        <div class="mode reveal"><span class="mode-key">7</span><div><h4>WIREFRAME</h4><p>Sparse geometry reconstruction for structural reading.</p></div></div>
+        <div class="mode reveal"><span class="mode-key">↯</span><div><h4>AND MORE</h4><p>Scan persistence, sweep speed, labels and point size are all tunable.</p></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= TECH STACK ================= -->
+  <section id="stack" aria-labelledby="stack-title">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <div class="kicker">04 — Tech stack</div>
+        <h2 class="section-title" id="stack-title">Small stack, deep simulation</h2>
+        <p class="section-desc">
+          One runtime dependency, no art assets, no game engine. The simulation, renderer, UI and
+          audio are all written from scratch.
+        </p>
+      </div>
+      <div class="stack-layout">
+        <dl class="stack-table reveal" style="margin:0;">
+          <div class="stack-row"><dt>Language</dt><dd><b>TypeScript</b> — all simulation and game logic</dd></div>
+          <div class="stack-row"><dt>Renderer</dt><dd><b>three.js 0.170</b> (WebGL 2) with a custom GLSL shader</dd></div>
+          <div class="stack-row"><dt>World</dt><dd><b>Spatial hash + 2D DDA</b> over analytic primitives</dd></div>
+          <div class="stack-row"><dt>Perception</dt><dd><b>Custom tracker</b> with confidence-gated classification</dd></div>
+          <div class="stack-row"><dt>Autonomy</dt><dd><b>Pure-pursuit planner</b> consuming perception only</dd></div>
+          <div class="stack-row"><dt>Vehicle</dt><dd><b>Arcade bicycle model</b> with battery, damage and regen</dd></div>
+          <div class="stack-row"><dt>UI</dt><dd><b>Vanilla DOM/CSS + Canvas 2D</b> — no framework</dd></div>
+          <div class="stack-row"><dt>Audio</dt><dd><b>Web Audio API</b> — fully synthesized, zero assets</dd></div>
+          <div class="stack-row"><dt>Desktop</dt><dd><b>Electron 33</b> with context-isolated IPC save bridge</dd></div>
+          <div class="stack-row"><dt>Build</dt><dd><b>esbuild 0.24</b> → single IIFE bundle</dd></div>
+          <div class="stack-row"><dt>Packaging</dt><dd><b>electron-builder 25</b> — portable exe + NSIS installer</dd></div>
+          <div class="stack-row"><dt>License</dt><dd><b>MIT</b> — JohnLC Studios Open Source Softwares</dd></div>
+        </dl>
+        <div class="stack-notes reveal">
+          <div class="note"><b>Deterministic world</b>A seeded generator builds the same six-district city, road graph and prop layout every run — good for tests and reproducible scenes.</div>
+          <div class="note"><b>Adaptive ray budget</b>The scanner measures milliseconds per ray and scales its per-frame budget toward a ~5 ms target, so low-end machines lose density instead of frame rate.</div>
+          <div class="note"><b>No cheating autonomy</b>The driving AI reads tracked objects and the road estimate, never true object positions. Uncertainty has consequences.</div>
+          <div class="note"><b>Assets optional</b>Rain, wind, engine, scans and alerts are generated at runtime. The repository ships no audio files.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= DOCS ================= -->
+  <section id="docs" aria-labelledby="docs-title">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <div class="kicker">05 — Documentation</div>
+        <h2 class="section-title" id="docs-title">Every subsystem, documented</h2>
+        <p class="section-desc">
+          Full technical documentation for the infrastructure — architecture, algorithms,
+          constants and design rules.
+        </p>
+      </div>
+      <div class="doc-grid">
+        <a class="doc reveal" href="../docs/README.md"><span>Documentation hub<small>Tech Stack + architecture</small></span><i>→</i></a>
+        <a class="doc reveal" href="../docs/world-engine.md"><span>World & raycasting<small>Spatial hash · DDA · traffic</small></span><i>→</i></a>
+        <a class="doc reveal" href="../docs/lidar-pipeline.md"><span>LiDAR pipeline<small>Scanning · shaders · latency</small></span><i>→</i></a>
+        <a class="doc reveal" href="../docs/perception.md"><span>Perception engine<small>Tracks · confidence · road estimate</small></span><i>→</i></a>
+        <a class="doc reveal" href="../docs/autonomy.md"><span>Autonomous driving<small>Six modes · AEB · pure pursuit</small></span><i>→</i></a>
+        <a class="doc reveal" href="../docs/vehicle.md"><span>Vehicle system<small>Physics · battery · damage</small></span><i>→</i></a>
+        <a class="doc reveal" href="../docs/missions-economy.md"><span>Missions & economy<small>Campaign · scoring · upgrades</small></span><i>→</i></a>
+        <a class="doc reveal" href="../docs/ui.md"><span>HUD & input<small>Panels · modes · controls</small></span><i>→</i></a>
+        <a class="doc reveal" href="../docs/persistence.md"><span>Persistence<small>Save schema · IPC bridge</small></span><i>→</i></a>
+        <a class="doc reveal" href="../docs/audio.md"><span>Audio<small>Web Audio graph · synthesis</small></span><i>→</i></a>
+        <a class="doc reveal" href="../docs/build-packaging.md"><span>Build & packaging<small>esbuild · Electron · installer</small></span><i>→</i></a>
+        <a class="doc reveal" href="../README.md"><span>Project README<small>Features · controls · builds</small></span><i>→</i></a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= DOWNLOAD ================= -->
+  <section id="download" aria-labelledby="download-title">
+    <div class="wrap">
+      <div class="download-card reveal">
+        <div>
+          <div class="kicker">06 — Get it</div>
+          <h2 id="download-title">Perceive the <span>invisible</span>.</h2>
+          <p>
+            Windows x64 portable executable or one-click installer. Or build the renderer and run
+            it from source in under a minute.
+          </p>
+          <div class="download-actions">
+            <a class="btn btn-primary" href="https://github.com/johnlcstudios-alt/PERCEPTION/releases" target="_blank" rel="noopener noreferrer">Download release</a>
+            <a class="btn btn-ghost" href="https://github.com/johnlcstudios-alt/PERCEPTION" target="_blank" rel="noopener noreferrer">View source</a>
+          </div>
+          <div class="hero-meta" style="margin-top:26px;">
+            <span><i></i> MIT License</span>
+            <span><i></i> v1.4.0</span>
+            <span><i></i> No telemetry</span>
+          </div>
+        </div>
+        <div class="terminal" aria-label="Build from source commands">
+          <div class="terminal-bar"><i></i><i></i><i></i></div>
+          <pre><span class="c"># clone and install</span>
+git clone https://github.com/johnlcstudios-alt/PERCEPTION
+cd PERCEPTION
+<span class="b">npm install</span>
+
+<span class="c"># build + launch</span>
+<span class="b">npm run dev</span>
+
+<span class="c"># package for Windows</span>
+<span class="b">npm run dist</span>
+<span class="g">→ release/PERCEPTION-Portable-1.4.0.exe</span>
+<span class="g">→ release/PERCEPTION-Setup-1.4.0.exe</span></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-top">
+      <div class="foot-brand">
+        <a class="brand" href="#top">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">PERCEPT<span>ION</span></span>
+        </a>
+        <p>
+          A LiDAR driving simulator. The world is invisible. Your sensors are your eyes.
+          All sensor product names are fictional game equipment.
+        </p>
+      </div>
+      <div class="foot-cols">
+        <div class="foot-col">
+          <h5>Game</h5>
+          <a href="#features">Features</a>
+          <a href="#pipeline">Sensor pipeline</a>
+          <a href="#modes">Visualization</a>
+          <a href="#download">Download</a>
+        </div>
+        <div class="foot-col">
+          <h5>Documentation</h5>
+          <a href="../docs/README.md">Docs hub</a>
+          <a href="../docs/README.md#tech-stack">Tech Stack</a>
+          <a href="../docs/world-engine.md">World engine</a>
+          <a href="../docs/lidar-pipeline.md">LiDAR pipeline</a>
+        </div>
+        <div class="foot-col">
+          <h5>Project</h5>
+          <a href="../README.md">README</a>
+          <a href="https://github.com/johnlcstudios-alt/PERCEPTION" target="_blank" rel="noopener noreferrer">GitHub</a>
+          <a href="../LICENSE">License</a>
+          <a href="https://github.com/johnlcstudios-alt/PERCEPTION/releases" target="_blank" rel="noopener noreferrer">Releases</a>
+        </div>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      <span>© 2026 JohnLC Studios Open Source Softwares</span>
+      <span>MIT · Built with TypeScript, three.js and Electron</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- reveal on scroll ---------- */
+  var revealEls = document.querySelectorAll(".reveal");
+  if ("IntersectionObserver" in window) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("in");
+          io.unobserve(entry.target);
+        }
+      });
+    }, { rootMargin: "0px 0px -8% 0px", threshold: 0.12 });
+    revealEls.forEach(function (el) { io.observe(el); });
+  } else {
+    revealEls.forEach(function (el) { el.classList.add("in"); });
+  }
+
+  /* ---------- animated LiDAR hero ---------- */
+  var canvas = document.getElementById("hero-canvas");
+  if (!canvas) return;
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduce) return;
+
+  var ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  var W = 0, H = 0, DPR = 1;
+  var points = [];
+  var phase = 0;
+  var last = performance.now();
+  var running = true;
+  var rafId = 0;
+
+  function rand(a, b) { return a + Math.random() * (b - a); }
+
+  function buildScene() {
+    points = [];
+    var count = Math.min(1500, Math.max(520, Math.round(W * H / 1600)));
+    for (var i = 0; i < count; i++) {
+      /* points clustered on a ground plane + vertical city silhouettes */
+      var vertical = Math.random() < 0.42;
+      var x, y;
+      if (vertical) {
+        x = rand(-1.15, 1.15);
+        y = Math.pow(Math.random(), 1.7) * 0.85;
+      } else {
+        x = rand(-1.15, 1.15);
+        y = Math.pow(Math.random(), 2.4) * 0.16;
+      }
+      points.push({
+        x: x,
+        y: y,
+        z: rand(0.12, 1),
+        vertical: vertical,
+        bright: Math.random()
+      });
+    }
+    points.sort(function (a, b) { return a.z - b.z; });
+  }
+
+  function resize() {
+    DPR = Math.min(2, window.devicePixelRatio || 1);
+    var rect = canvas.getBoundingClientRect();
+    W = Math.max(1, Math.round(rect.width));
+    H = Math.max(1, Math.round(rect.height));
+    canvas.width = Math.round(W * DPR);
+    canvas.height = Math.round(H * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    buildScene();
+  }
+
+  function project(p) {
+    /* simple perspective: vanishing point right-of-center, horizon 55% down */
+    var horizon = H * 0.54;
+    var scale = H * 0.62;
+    var depth = 0.18 + p.z * 1.25;
+    var vx = W * 0.62;
+    var px = vx + (p.x * scale) / depth;
+    var py = horizon + ((p.y - 0.10) * scale) / depth;
+    return { x: px, y: py, d: depth };
+  }
+
+  function draw(now) {
+    if (!running) return;
+    var dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    phase += dt * 0.55;
+
+    ctx.clearRect(0, 0, W, H);
+
+    var sweepX = W * 0.62 + Math.cos(phase) * W * 0.55;
+    var sweepY = H * 0.56;
+    var sweepAngle = Math.atan2(H * 0.30, W * 0.55) * Math.sin(phase);
+
+    /* faint horizon glow */
+    var glow = ctx.createRadialGradient(W * 0.62, H * 0.56, 0, W * 0.62, H * 0.56, W * 0.55);
+    glow.addColorStop(0, "rgba(83,230,255,0.075)");
+    glow.addColorStop(0.5, "rgba(83,230,255,0.02)");
+    glow.addColorStop(1, "rgba(4,6,11,0)");
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, W, H);
+
+    /* sweep beam */
+    ctx.save();
+    ctx.translate(W * 0.62, H * 0.56);
+    var beam = ctx.createLinearGradient(0, 0, W * 0.7, 0);
+    beam.addColorStop(0, "rgba(83,230,255,0.0)");
+    beam.addColorStop(1, "rgba(83,230,255,0.13)");
+    ctx.fillStyle = beam;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.arc(0, 0, Math.max(W, H) * 0.95, -0.10 + sweepAngle, 0.10 + sweepAngle);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    /* points */
+    for (var i = 0; i < points.length; i++) {
+      var p = points[i];
+      var pt = project(p);
+      if (pt.x < -40 || pt.x > W + 40 || pt.y < -40 || pt.y > H + 40) continue;
+
+      /* distance from the sweep line in screen space drives illumination */
+      var dist = Math.abs(pt.x - sweepX);
+      var lit = Math.max(0, 1 - dist / (W * 0.22));
+      var baseAlpha = 0.16 + p.bright * 0.26;
+
+      var color;
+      if (p.vertical) {
+        color = lit > 0.35
+          ? "rgba(154,107,255," + (0.30 + lit * 0.55) + ")"
+          : "rgba(96,132,168," + baseAlpha + ")";
+      } else {
+        color = lit > 0.15
+          ? "rgba(83,230,255," + (0.30 + lit * 0.65) + ")"
+          : "rgba(72,118,146," + baseAlpha + ")";
+      }
+
+      var r = Math.max(0.5, Math.min(2.1, (1.15 / pt.d) * 0.75));
+      if (lit > 0.45) {
+        r *= 1.35;
+        ctx.shadowBlur = 7;
+        ctx.shadowColor = p.vertical ? "rgba(154,107,255,0.7)" : "rgba(83,230,255,0.75)";
+      } else {
+        ctx.shadowBlur = 0;
+      }
+      ctx.fillStyle = color;
+      ctx.fillRect(pt.x - r / 2, pt.y - r / 2, r, r);
+    }
+    ctx.shadowBlur = 0;
+
+    /* sensor origin marker */
+    var ox = W * 0.62, oy = H * 0.86;
+    ctx.strokeStyle = "rgba(83,230,255,0.5)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(ox, oy, 7, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(ox, oy, 2, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(83,230,255,0.9)";
+    ctx.fill();
+
+    rafId = requestAnimationFrame(draw);
+  }
+
+  function start() {
+    if (running) { rafId = requestAnimationFrame(draw); }
+  }
+
+  window.addEventListener("resize", resize, { passive: true });
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) {
+      running = false;
+      cancelAnimationFrame(rafId);
+    } else if (!running) {
+      running = true;
+      last = performance.now();
+      rafId = requestAnimationFrame(draw);
+    }
+  });
+
+  resize();
+  rafId = requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>

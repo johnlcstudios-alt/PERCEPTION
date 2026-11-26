@@ -4,11 +4,11 @@ import { Track } from './perception';
 import { clamp } from './input';
 
 export interface HudCtx {
-  sensorModel: string; sensorHz: number; sensorRange: number; density: number;
+  sensorModel: string; aux: string; sensorHz: number; sensorRange: number; density: number;
   tracks: number; latencyMs: number; vizName: string; budgetLimited: boolean;
   speed: number; gear: string; battery: number; damage: number;
   autoMode: number; autoModeName: string; autoStatus: string; routeActive: boolean;
-  weather: string; clock: string; district: string;
+  weather: string; clock: string; district: string; gnss: string;
   missionTitle: string; missionObjective: string; missionProgress: string;
   destName: string; destDist: number | null;
 }
@@ -28,9 +28,9 @@ export class HUD {
 
   constructor() {
     const $ = (id: string) => document.getElementById(id);
-    for (const id of ['hud', 's-model', 's-hz', 's-range', 's-density', 's-tracks', 's-latency', 's-viz',
+    for (const id of ['hud', 's-model', 's-aux', 's-hz', 's-range', 's-density', 's-tracks', 's-latency', 's-viz',
       'v-speed', 'v-gear', 'v-batt', 'v-batt-bar', 'v-dmg', 'v-dmg-bar',
-      'a-mode', 'a-status', 'a-route', 'e-weather', 'e-time', 'e-district',
+      'a-mode', 'a-status', 'a-route', 'e-weather', 'e-time', 'e-district', 'e-gnss',
       'm-title', 'm-objective', 'm-progress', 'n-dest', 'n-dist']) {
       this.el[id] = $(id)!;
     }
@@ -59,6 +59,7 @@ export class HUD {
       this.lastPanel = now;
       const e = this.el;
       e['s-model'].textContent = ctx.sensorModel;
+      e['s-aux'].textContent = ctx.aux || '—';
       e['s-hz'].textContent = ctx.sensorHz.toFixed(1) + ' Hz' + (ctx.budgetLimited ? ' !' : '');
       e['s-hz'].style.color = ctx.budgetLimited ? 'var(--amber)' : '';
       e['s-range'].textContent = Math.round(ctx.sensorRange) + ' m';
@@ -80,6 +81,7 @@ export class HUD {
       e['e-weather'].textContent = ctx.weather;
       e['e-time'].textContent = ctx.clock;
       e['e-district'].textContent = ctx.district;
+      e['e-gnss'].textContent = ctx.gnss || '—';
       e['m-title'].textContent = ctx.missionTitle;
       e['m-objective'].textContent = ctx.missionObjective;
       e['m-progress'].textContent = ctx.missionProgress;

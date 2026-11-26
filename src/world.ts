@@ -68,14 +68,25 @@ function mulberry32(seed: number) {
   };
 }
 
+/* sectors are north-south bands along the endless interstate (carriageway A runs at x=-9) */
 export const DISTRICTS = {
-  facility:     { name: 'TESTING FACILITY',   cx: -550, cz: -550, size: 460 },
-  city:         { name: 'CITY CENTER',        cx: 350,  cz: 250,  size: 760 },
-  highway:      { name: 'HIGHWAY NETWORK',    cx: 100,  cz: -1050, size: 300 },
-  industrial:   { name: 'INDUSTRIAL DISTRICT',cx: 1050, cz: 500,  size: 520 },
-  mountain:     { name: 'MOUNTAIN ROADS',     cx: -850, cz: 350,  size: 620 },
-  experimental: { name: 'EXPERIMENTAL ZONE',  cx: 950,  cz: -620, size: 400 }
+  facility:     { name: 'TEST SECTOR',      cx: -9, cz: -1333, size: 533 },
+  city:         { name: 'MERIDIAN SECTOR',  cx: -9, cz: -800,  size: 533 },
+  highway:      { name: 'INTERSTATE CORE',  cx: -9, cz: -267,  size: 533 },
+  industrial:   { name: 'FREIGHT SECTOR',   cx: -9, cz: 267,   size: 533 },
+  mountain:     { name: 'RIDGE PASS',       cx: -9, cz: 800,   size: 533 },
+  experimental: { name: 'POLAR GATE',       cx: -9, cz: 1333,  size: 533 }
 };
+
+/* sector key for a z coordinate (used to tag road segments) */
+export function sectorOfZ(z: number): string {
+  if (z < -1067) return 'facility';
+  if (z < -533) return 'city';
+  if (z < 0) return 'highway';
+  if (z < 533) return 'industrial';
+  if (z < 1067) return 'mountain';
+  return 'experimental';
+}
 
 const GRID_N = Math.ceil(WORLD.size / WORLD.gridCell); // cells per axis
 const GRID_HALF = GRID_N / 2;
@@ -111,7 +122,7 @@ export class World {
     this.objNext = new Int32Array(65536);
     this.objCell = new Int32Array(65536);
     this.roadIndex = new Int32Array(GRID_N * GRID_N).fill(-1);
-    this.roadNext = new Int32Array(65536);
+    this.roadNext = new Int32Array(262144); /* edge list: (segment, cell) pairs */
     this.rng = mulberry32(seed);
     this.districtOfCell = new Uint8Array(GRID_N * GRID_N);
   }
@@ -360,6 +371,11 @@ export class World {
   /* ---------------- ground material ---------------- */
 
   private indexRoads() {
+    /* roadIndex cells store PACKED entries (slot * 4096 + segmentId); roadNext is
+       a flat edge list keyed by slot — one entry per (segment, cell) insertion,
+       because a long segment lives in many cell lists at once. */
+    this.roadIndex.fill(-1);
+    let slot = 0;
     for (let si = 0; si < this.roads.length; si++) {
       const s = this.roads[si];
       const pad = s.half + 3;
@@ -369,10 +385,22 @@ export class World {
       const r1 = Math.floor((Math.max(s.az, s.bz) + pad) / WORLD.gridCell + GRID_HALF);
       for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
         if (c < 0 || r < 0 || c >= GRID_N || r >= GRID_N) continue;
+        if (slot >= this.roadNext.length) return; /* edge list full — fail safe */
         const cell = r * GRID_N + c;
-        this.roadNext[si] = this.roadIndex[cell];
-        this.roadIndex[cell] = si;
+        this.roadNext[slot] = this.roadIndex[cell];
+        this.roadIndex[cell] = slot * 4096 + si;
+        slot++;
       }
+    }
+  }
+
+  /* iterate the segments indexed in a cell */
+  private roadSegsAt(cell: number, fn: (si: number) => void) {
+    let entry = this.roadIndex[cell];
+    let guard = 0;
+    while (entry !== -1 && entry !== undefined && guard++ < 4096) {
+      fn(entry & 4095);
+      entry = this.roadNext[entry >>> 12];
     }
   }
 
@@ -393,13 +421,11 @@ export class World {
     let bestSeg: RoadSeg | null = null;
     let bestInfo = { d: 1e9, along: 0, lat: 0 };
     if (cell >= 0) {
-      let si = this.roadIndex[cell];
-      while (si !== -1) {
+      this.roadSegsAt(cell, (si) => {
         const s = this.roads[si];
         const info = this.distToSeg(s, x, z);
         if (info.d < bestInfo.d) { bestInfo = info; bestSeg = s; }
-        si = this.roadNext[si];
-      }
+      });
     }
     if (bestSeg && bestInfo.d <= bestSeg.half) {
       /* lane paint */
@@ -430,21 +456,18 @@ export class World {
       return bestSeg.kind === 'pad' ? MAT.CONCRETE : MAT.ASPHALT;
     }
     if (bestSeg && bestInfo.d <= bestSeg.half + 2.4) {
-      const dist = DISTRICTS[bestSeg.district as keyof typeof DISTRICTS];
-      if (dist && (bestSeg.district === 'mountain')) return MAT.DIRT;
-      return MAT.CONCRETE;
+      return MAT.CONCRETE; /* shoulder */
     }
-    /* district ground */
+    /* sector ground */
     const district = this.districtAt(x, z);
     switch (district) {
       case 'facility': return MAT.CONCRETE;
-      case 'city': {
-        const n = Math.sin(x * 0.021 + Math.floor(z / 26) * 3.7) * Math.cos(z * 0.017 + Math.floor(x / 31) * 2.3);
-        return n > 0.25 ? MAT.GRASS : MAT.CONCRETE;
-      }
       case 'industrial': return MAT.CONCRETE;
-      case 'mountain': return MAT.GRASS;
       case 'experimental': return MAT.TARMAC_DARK;
+      case 'mountain': {
+        const n = Math.sin(x * 0.03 + z * 0.021);
+        return n > 0.4 ? MAT.DIRT : MAT.GRASS;
+      }
       default: return MAT.GRASS;
     }
   }
@@ -490,102 +513,55 @@ export class World {
   }
 
   buildNetwork() {
-    /* CITY GRID */
-    const S = 92, N = 6;
-    const cx = DISTRICTS.city.cx, cz = DISTRICTS.city.cz;
-    const gridNodes: number[][] = [];
-    for (let r = 0; r <= N; r++) {
-      gridNodes[r] = [];
-      for (let c = 0; c <= N; c++) {
-        gridNodes[r][c] = this.addNode(cx + (c - N / 2) * S, cz + (r - N / 2) * S, 'city', true);
-      }
+    /* THE ENDLESS INTERSTATE: two 3-lane one-way carriageways running the full
+       north-south span, joined by U-turn loops at both ends — drive forever. */
+    const XA = -9, XB = 9;          // carriageway centerlines (median at x=0)
+    const Z0 = -1500, Z1 = 1500;
+    const SEGS = 8;
+    const step = (Z1 - Z0) / SEGS;  // 375 m
+
+    /* northbound carriageway A (travel +z) */
+    const aStart = this.addNode(XA, Z0, sectorOfZ(Z0));
+    let prevA = aStart;
+    for (let i = 1; i <= SEGS; i++) {
+      const z = Z0 + step * i;
+      const dKey = sectorOfZ(z);
+      const nid = this.addNode(XA, z, dKey);
+      const nn = this.nodes[nid];
+      this.nodes[prevA].links.push(nid); this.nodes[nid].links.push(prevA);
+      this.addRoad(this.nodes[prevA].x, this.nodes[prevA].z, nn.x, nn.z, { half: 9, lanes: 3, speed: 33, kind: 'highway', district: dKey, oneway: 1, aNode: prevA, bNode: nid });
+      prevA = nid;
     }
-    for (let r = 0; r <= N; r++) for (let c = 0; c < N; c++) {
-      const a = gridNodes[r][c], b = gridNodes[r][c + 1];
-      const na = this.nodes[a], nb = this.nodes[b];
-      na.links.push(b); nb.links.push(a);
-      this.addRoad(na.x, na.z, nb.x, nb.z, { half: 8, lanes: 2, speed: 12, kind: 'avenue', district: 'city', aNode: a, bNode: b });
+    const aEnd = prevA;
+
+    /* southbound carriageway B (travel -z) */
+    const bStart = this.addNode(XB, Z1, sectorOfZ(Z1));
+    let prevB = bStart;
+    for (let i = 1; i <= SEGS; i++) {
+      const z = Z1 - step * i;
+      const dKey = sectorOfZ(z);
+      const nid = this.addNode(XB, z, dKey);
+      const nn = this.nodes[nid];
+      this.nodes[prevB].links.push(nid); this.nodes[nid].links.push(prevB);
+      this.addRoad(this.nodes[prevB].x, this.nodes[prevB].z, nn.x, nn.z, { half: 9, lanes: 3, speed: 33, kind: 'highway', district: dKey, oneway: 1, aNode: prevB, bNode: nid });
+      prevB = nid;
     }
-    for (let r = 0; r < N; r++) for (let c = 0; c <= N; c++) {
-      const a = gridNodes[r][c], b = gridNodes[r + 1][c];
-      const na = this.nodes[a], nb = this.nodes[b];
-      na.links.push(b); nb.links.push(a);
-      this.addRoad(na.x, na.z, nb.x, nb.z, { half: 8, lanes: 2, speed: 12, kind: 'street', district: 'city', aNode: a, bNode: b });
-    }
+    const bEnd = prevB;
 
-    /* HIGHWAY: two parallel one-way carriageways */
-    const hz = DISTRICTS.highway.cz;
-    const hx0 = -1250, hx1 = 1450;
-    const sA = this.addRoad(hx0, hz - 9, hx1, hz - 9, { half: 10, lanes: 2, speed: 33, kind: 'highway', district: 'highway', oneway: 1 });
-    const sB = this.addRoad(hx1, hz + 9, hx0, hz + 9, { half: 10, lanes: 2, speed: 33, kind: 'highway', district: 'highway', oneway: 2 });
-    const hA0 = this.addNode(hx0, hz - 9, 'highway'), hA1 = this.addNode(hx1, hz - 9, 'highway');
-    const hB0 = this.addNode(hx0, hz + 9, 'highway'), hB1 = this.addNode(hx1, hz + 9, 'highway');
-    this.roads[sA].aNode = hA0; this.roads[sA].bNode = hA1;
-    this.roads[sB].aNode = hB1; this.roads[sB].bNode = hB0;
-    this.nodes[hA0].links.push(hA1); this.nodes[hA1].links.push(hA0);
-    this.nodes[hB0].links.push(hB1); this.nodes[hB1].links.push(hB0);
+    /* U-turn loops — the "endless" part: run out of highway, swing around, run back */
+    const nLoopId = this.addNode(0, 1556, 'experimental');
+    const nLoop = this.nodes[nLoopId];
+    this.nodes[aEnd].links.push(nLoopId); this.nodes[nLoopId].links.push(aEnd);
+    this.addRoad(this.nodes[aEnd].x, this.nodes[aEnd].z, nLoop.x, nLoop.z, { half: 6, lanes: 1, speed: 10, kind: 'ramp', district: 'experimental', oneway: 1, aNode: aEnd, bNode: nLoopId });
+    this.nodes[nLoopId].links.push(bStart); this.nodes[bStart].links.push(nLoopId);
+    this.addRoad(nLoop.x, nLoop.z, this.nodes[bStart].x, this.nodes[bStart].z, { half: 6, lanes: 1, speed: 10, kind: 'ramp', district: 'experimental', oneway: 1, aNode: nLoopId, bNode: bStart });
 
-    /* RAMP: city south edge down to highway */
-    const rampNodeCity = this.addNode(cx, cz + (N / 2) * S + 90, 'city');
-    const citySouth = gridNodes[N][Math.floor(N / 2)];
-    this.nodes[citySouth].links.push(rampNodeCity);
-    this.addRoad(this.nodes[citySouth].x, this.nodes[citySouth].z, cx, hz + 9, { half: 5, lanes: 1, speed: 14, kind: 'ramp', district: 'city', aNode: citySouth, bNode: rampNodeCity });
-    this.nodes[rampNodeCity].links.push(hB1);
-    this.addRoad(cx, hz + 9, cx, hz + 9, { half: 0.1, lanes: 1, speed: 0, kind: 'ramp', district: 'highway' }); // zero-length marker (skipped)
-    this.roads.pop(); // remove marker; ramp connects at hz+9 via node proximity
-    const rampJoin = this.addRoad(cx, this.nodes[citySouth].z + 90, cx, hz + 21, { half: 5, lanes: 1, speed: 14, kind: 'ramp', district: 'highway', aNode: rampNodeCity, bNode: hB0 });
-    this.nodes[hB0].links.push(rampNodeCity); this.nodes[rampNodeCity].links.push(hB0);
-    void rampJoin;
-
-    /* INDUSTRIAL connector from city east side */
-    const cityEast = gridNodes[Math.floor(N / 2)][N];
-    const indNode = this.addNode(DISTRICTS.industrial.cx - 180, DISTRICTS.industrial.cz, 'industrial');
-    this.nodes[cityEast].links.push(indNode); this.nodes[indNode].links.push(cityEast);
-    this.addRoad(this.nodes[cityEast].x, this.nodes[cityEast].z, this.nodes[indNode].x, this.nodes[indNode].z, { half: 7, lanes: 2, speed: 15, kind: 'avenue', district: 'industrial', aNode: cityEast, bNode: indNode });
-    /* industrial internal yard road */
-    const indB = this.addNode(DISTRICTS.industrial.cx + 100, DISTRICTS.industrial.cz, 'industrial');
-    this.nodes[indNode].links.push(indB); this.nodes[indB].links.push(indNode);
-    this.addRoad(this.nodes[indNode].x, this.nodes[indNode].z, this.nodes[indB].x, this.nodes[indB].z, { half: 6, lanes: 2, speed: 10, kind: 'pad', district: 'industrial', aNode: indNode, bNode: indB });
-
-    /* MOUNTAIN rural road: winding path west */
-    const wx = DISTRICTS.mountain.cx, wz = DISTRICTS.mountain.cz;
-    const path: [number, number][] = [
-      [wx - 260, wz - 240], [wx - 180, wz - 120], [wx - 240, wz + 10], [wx - 140, wz + 130],
-      [wx + 10, wz + 170], [wx + 150, wz + 90], [wx + 210, wz - 40], [wx + 130, wz - 160],
-      [wx - 10, wz - 220]
-    ];
-    let prev = -1;
-    const cityWest = gridNodes[Math.floor(N / 2)][0];
-    for (let i = 0; i < path.length; i++) {
-      const nId = this.addNode(path[i][0], path[i][1], 'mountain');
-      if (prev >= 0) {
-        this.nodes[prev].links.push(nId); this.nodes[nId].links.push(prev);
-        this.addRoad(this.nodes[prev].x, this.nodes[prev].z, this.nodes[nId].x, this.nodes[nId].z, { half: 5.5, lanes: 1, speed: 11, kind: 'rural', district: 'mountain', aNode: prev, bNode: nId });
-      } else {
-        this.nodes[cityWest].links.push(nId); this.nodes[nId].links.push(cityWest);
-        this.addRoad(this.nodes[cityWest].x, this.nodes[cityWest].z, this.nodes[nId].x, this.nodes[nId].z, { half: 5.5, lanes: 1, speed: 11, kind: 'rural', district: 'mountain', aNode: cityWest, bNode: nId });
-      }
-      prev = nId;
-    }
-    /* mountain loop back to highway west end */
-    this.nodes[prev].links.push(hB0); this.nodes[hB0].links.push(prev);
-    this.addRoad(this.nodes[prev].x, this.nodes[prev].z, hx0, hz + 9, { half: 5.5, lanes: 1, speed: 11, kind: 'rural', district: 'mountain', aNode: prev, bNode: hB0 });
-
-    /* EXPERIMENTAL zone access from highway */
-    const expNode = this.addNode(DISTRICTS.experimental.cx, DISTRICTS.experimental.cz + 160, 'experimental');
-    const hMid = this.addNode(600, hz + 9, 'highway');
-    this.nodes[hMid].links.push(expNode); this.nodes[expNode].links.push(hMid);
-    this.nodes[hB0].links.push(hMid); this.nodes[hMid].links.push(hB0);
-    this.addRoad(600, hz + 9, this.nodes[expNode].x, this.nodes[expNode].z, { half: 5, lanes: 1, speed: 12, kind: 'ramp', district: 'experimental', aNode: hMid, bNode: expNode });
-
-    /* FACILITY access from city west */
-    const facNode = this.addNode(DISTRICTS.facility.cx + 180, DISTRICTS.facility.cz, 'facility');
-    this.nodes[cityWest].links.push(facNode); this.nodes[facNode].links.push(cityWest);
-    this.addRoad(this.nodes[facNode].x, this.nodes[facNode].z, this.nodes[cityWest].x, this.nodes[cityWest].z, { half: 6, lanes: 2, speed: 13, kind: 'avenue', district: 'facility', aNode: facNode, bNode: cityWest });
-    /* facility internal test strip */
-    const facA = this.addNode(DISTRICTS.facility.cx - 190, DISTRICTS.facility.cz, 'facility');
-    this.nodes[facNode].links.push(facA); this.nodes[facA].links.push(facNode);
-    this.addRoad(this.nodes[facA].x, this.nodes[facA].z, this.nodes[facNode].x, this.nodes[facNode].z, { half: 6, lanes: 2, speed: 10, kind: 'pad', district: 'facility', aNode: facA, bNode: facNode });
+    const sLoopId = this.addNode(0, -1556, 'facility');
+    const sLoop = this.nodes[sLoopId];
+    this.nodes[bEnd].links.push(sLoopId); this.nodes[sLoopId].links.push(bEnd);
+    this.addRoad(this.nodes[bEnd].x, this.nodes[bEnd].z, sLoop.x, sLoop.z, { half: 6, lanes: 1, speed: 10, kind: 'ramp', district: 'facility', oneway: 1, aNode: bEnd, bNode: sLoopId });
+    this.nodes[sLoopId].links.push(aStart); this.nodes[aStart].links.push(sLoopId);
+    this.addRoad(sLoop.x, sLoop.z, this.nodes[aStart].x, this.nodes[aStart].z, { half: 6, lanes: 1, speed: 10, kind: 'ramp', district: 'facility', oneway: 1, aNode: sLoopId, bNode: aStart });
 
     this.indexRoads();
   }
@@ -594,58 +570,119 @@ export class World {
 
   buildDistricts() {
     this.buildNetwork();
-    this.buildFacility();
-    this.buildCity();
-    this.buildHighway();
-    this.buildIndustrial();
+    this.buildInterstate();
     this.buildMountain();
     this.buildExperimental();
     this.buildChargePads();
     this.refreshDynamicGrid();
   }
 
-  private buildFacility() {
-    const { cx, cz } = DISTRICTS.facility;
+  /* ---------------- the endless interstate ---------------- */
+
+  private buildInterstate() {
     const r = () => this.rng();
-    /* perimeter walls */
-    const W = 220;
-    this.addBox('barrier', MAT.BARRIER, cx, 1.2, cz - W, 2 * W + 8, 2.4, 1.2, 0, { collR: 0 });
-    this.addBox('barrier', MAT.BARRIER, cx, 1.2, cz + W, 2 * W + 8, 2.4, 1.2, 0, { collR: 0 });
-    this.addBox('barrier', MAT.BARRIER, cx - W, 1.2, cz, 1.2, 2.4, 2 * W + 8, 0, { collR: 0 });
-    this.addBox('barrier', MAT.BARRIER, cx + W, 1.2, cz, 1.2, 2.4, 2 * W + 8, 0, { collR: 0 });
+    const SHOULDER = 23; // shoulder centerline (road edge at ±18, rail at ±26)
 
-    /* control tower */
-    this.addBox('building', MAT.BUILDING, cx - 150, 9, cz - 150, 30, 18, 30, 0, { tags: ['scan-tower'] });
-    this.addBox('building', MAT.GLASS, cx - 150, 19, cz - 150, 26, 4, 26, 0);
+    /* median jersey barrier (impassable) — opens at the polar tower plaza */
+    for (let z = -1500; z < 1500; z += 50) {
+      if (z >= 1290 && z < 1380) continue;
+      this.addBox('barrier', MAT.CONCRETE, 0, 0.55, z + 25, 50, 1.1, 0.6, 0, { collR: 1.6, tags: ['median'] });
+    }
+    /* guardrails — east side gaps at the rest stop */
+    for (let z = -1500; z < 1500; z += 50) {
+      if (!(z >= -60 && z < 60)) this.addBox('barrier', MAT.METAL, 26, 1.0, z + 25, 50, 1.4, 0.4, 0, { collR: 1.6, tags: ['guardrail'] });
+      this.addBox('barrier', MAT.METAL, -26, 1.0, z + 25, 50, 1.4, 0.4, 0, { collR: 1.6, tags: ['guardrail'] });
+    }
+    /* light poles, alternating flanks */
+    for (let z = -1475; z <= 1475; z += 100) {
+      const side = (Math.floor((z + 1500) / 100) % 2 === 0) ? -1 : 1;
+      const px = side * 24.5;
+      this.addCylinder('pole', MAT.METAL, px, 0, z, 0.35, 11, { collR: 0.8 });
+      this.addBox('prop', MAT.METAL, px - side * 1.4, 11.1, z, 3.2, 0.3, 0.7, 0, { collR: 0 });
+    }
+    /* gantry sign gantries every 500 m */
+    for (const gz of [-1250, -750, -250, 250, 750, 1250]) {
+      this.addCylinder('pole', MAT.METAL, -27, 0, gz, 0.6, 9, { collR: 1 });
+      this.addCylinder('pole', MAT.METAL, 27, 0, gz, 0.6, 9, { collR: 1 });
+      this.addBox('prop', MAT.METAL, 0, 8.9, gz, 56, 0.5, 0.6, 0, { collR: 0 });
+      this.addBox('sign', MAT.SIGN, gz > 0 ? -9 : 9, 8.2, gz, 14, 3.2, 0.4, 0, { collR: 0, tags: ['gantry'] });
+    }
 
-    /* obstacle course: slalom cones */
-    for (let i = 0; i < 7; i++) {
-      this.addCone('cone', MAT.BARRIER, cx - 120 + i * 32, 0, cz - 40 + (i % 2 === 0 ? -6 : 6), 0.55, 1.0, { tags: ['course-cone'] });
+    /* ---- TEST SECTOR (south end): slalom, parked row, parking bay, pylons ---- */
+    for (let i = 0; i < 10; i++) {
+      this.addCone('cone', MAT.BARRIER, SHOULDER + (i % 2 === 0 ? 1.6 : -1.6), 0, -1440 + i * 32, 0.55, 1.0, { tags: ['course-cone'] });
     }
-    /* boxed corridor */
-    for (let i = 0; i < 6; i++) {
-      this.addBox('barrier', MAT.BARRIER, cx - 60, 0.6, cz + 20 + i * 0, 4, 1.2, 1.2, i * 0.3);
-      this.addBox('barrier', MAT.BARRIER, cx - 60 + i * 24, 0.6, cz + 60, 2, 1.2, 12, 0, { tags: ['course-wall'] });
-      this.addBox('barrier', MAT.BARRIER, cx - 60 + i * 24, 0.6, cz + 100, 2, 1.2, 12, 0, { tags: ['course-wall'] });
+    for (let i = 0; i < 5; i++) this.makeParkedCar(SHOULDER, -1100 + i * 26, 0, ['parked-row']);
+    /* parking bay paint (north-south aligned) */
+    this.addBox('prop', MAT.PAINT, SHOULDER, 0.02, -950, 0.4, 0.05, 12, 0, { collR: 0 });
+    this.addBox('prop', MAT.PAINT, SHOULDER - 3.5, 0.02, -950, 0.4, 0.05, 12, 0, { collR: 0 });
+    this.addBox('prop', MAT.PAINT, SHOULDER + 3.5, 0.02, -950, 0.4, 0.05, 12, 0, { collR: 0 });
+    this.addBox('prop', MAT.PAINT, SHOULDER, 0.02, -944, 7.4, 0.05, 0.4, 0, { collR: 0 });
+    this.addBox('prop', MAT.PAINT, SHOULDER, 0.02, -956, 7.4, 0.05, 0.4, 0, { collR: 0 });
+    /* sensor test pylons (east shoulder) */
+    for (const d of [-1450, -1250, -1050]) {
+      this.addCylinder('pole', MAT.METAL, 23, 0, d, 0.6, 4.2, { tags: ['pylon'] });
+      this.addSphere('sign', MAT.SIGN, 23, 4.6, d, 1.2, { tags: ['pylon'] });
     }
-    /* parked vehicles row */
-    for (let i = 0; i < 5; i++) this.makeParkedCar(cx + 60 + i * 26, cz - 100, r() * Math.PI * 2);
-    /* parking bays with target */
-    for (let i = 0; i < 6; i++) {
-      this.addBox('prop', MAT.PAINT, cx + 40 + i * 14, 0.02, cz + 120, 0.4, 0.05, 12, 0, { collR: 0 });
+    /* control shed (west shoulder, south end) */
+    this.addBox('building', MAT.BUILDING, -23, 2.5, -1560, 8, 5, 12, 0, { tags: ['shed'] });
+
+    /* ---- REST STOP (east side, z≈0) ---- */
+    this.addBox('prop', MAT.PAINT, 40, 0.02, 0, 40, 0.05, 80, 0, { collR: 0, tags: ['rest-apron'] });
+    this.addBox('building', MAT.BUILDING, 44, 3, -28, 12, 6, 10, 0, { tags: ['rest-shed'] });
+    /* fuel canopy */
+    for (const fz of [16, 30]) {
+      this.addCylinder('pole', MAT.METAL, 34, 0, fz, 0.4, 5.5, { collR: 0.9 });
+      this.addCylinder('pole', MAT.METAL, 46, 0, fz, 0.4, 5.5, { collR: 0.9 });
     }
-    this.addBox('prop', MAT.PAINT, cx + 40, 0.02, cz + 114, 78, 0.05, 0.4, 0, { collR: 0 });
-    this.addBox('prop', MAT.PAINT, cx + 40, 0.02, cz + 126, 78, 0.05, 0.4, 0, { collR: 0 });
-    /* sensor test pylons at graduated ranges (inside the pad, east arm) */
-    for (const d of [25, 50, 90, 140, 180]) {
-      this.addCylinder('pole', MAT.METAL, cx + 40 + d, 0, cz - 150, 0.6, 4.2, { tags: ['pylon-' + d] });
-      this.addSphere('sign', MAT.SIGN, cx + 40 + d, 4.6, cz - 150, 1.2, { tags: ['pylon-' + d] });
+    this.addBox('prop', MAT.METAL, 40, 5.7, 23, 16, 0.5, 18, 0, { collR: 0 });
+    this.makeParkedCar(50, -10, Math.PI / 2);
+    this.makeParkedCar(50, 44, Math.PI / 2);
+
+    /* ---- FREIGHT SECTOR: container stacks + warehouses beyond the rails ---- */
+    for (let i = 0; i < 24; i++) {
+      const x = (i % 2 === 0 ? 1 : -1) * (42 + (Math.floor(i / 2) % 3) * 12);
+      const z = 80 + Math.floor(i / 6) * 90 + (i % 6) * 13;
+      const rows = 1 + Math.floor(r() * 3);
+      for (let k = 0; k < rows; k++) {
+        this.addBox('obstacle', MAT.METAL, x, 1.35 + k * 2.7, z, 12.2, 2.6, 2.6, (r() - 0.5) * 0.1, { tags: ['container'] });
+      }
     }
-    /* light poles */
-    for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2;
-      this.addCylinder('pole', MAT.METAL, cx + Math.cos(a) * 190, 0, cz + Math.sin(a) * 190, 0.35, 9, {});
-      this.addBox('prop', MAT.METAL, cx + Math.cos(a) * 190, 9.1, cz + Math.sin(a) * 190, 2.6, 0.3, 0.8, a);
+    this.addBox('building', MAT.METAL, 64, 7, 330, 44, 14, 30, 0, { tags: ['warehouse'] });
+    this.addCylinder('prop', MAT.METAL, 84, 0, 300, 2.2, 9, { tags: ['silo'] });
+    this.addCylinder('prop', MAT.METAL, 90, 0, 300, 2.2, 9, { tags: ['silo'] });
+
+    /* ---- RIDGE PASS: hills, rocks, trees (kept clear of the corridor) ---- */
+    for (let i = 0; i < 16; i++) {
+      const side = i % 2 === 0 ? -1 : 1;
+      this.addCone('building', MAT.GRASS, side * (120 + r() * 90), 0, 560 + (i / 16) * 520, 60 + r() * 30, 40 + r() * 50, { collR: 0, tags: ['hill'] });
+    }
+    for (let i = 0; i < 26; i++) {
+      const side = r() < 0.5 ? -1 : 1;
+      const x = side * (30 + r() * 26);
+      const z = 560 + r() * 500;
+      if (r() < 0.6) this.makeTree(x, z);
+      else this.addSphere('rock', MAT.ROCK, x, 0.4, z, 0.9 + r() * 2.0, { collR: 1.8, tags: ['boulder'] });
+    }
+
+    /* ---- POLAR GATE: dark monoliths + doppler tower on an opened median ---- */
+    for (let i = 0; i < 14; i++) {
+      const side = i % 2 === 0 ? -1 : 1;
+      const d = 45 + r() * 80;
+      const h = 8 + r() * 22;
+      this.addBox('building', MAT.DARK, side * (26 + d), h / 2, 1100 + (i / 14) * 480, 6 + r() * 14, h, 6 + r() * 14, r() * Math.PI, { tags: ['monolith'] });
+    }
+    this.addBox('prop', MAT.CONCRETE, 0, 0.02, 1333, 10, 0.05, 90, 0, { collR: 0 });
+    this.addCylinder('building', MAT.DARK, 0, 0, 1333, 5, 46, { tags: ['tower'], collR: 5 });
+    this.addSphere('building', MAT.DARK, 0, 48, 1333, 4, { tags: ['tower'], collR: 0 });
+
+    /* ---- tree rows along both flanks ---- */
+    for (let i = 0; i < 90; i++) {
+      const side = r() < 0.5 ? -1 : 1;
+      const x = side * (33 + r() * 14);
+      const z = -1580 + r() * 3140;
+      if (side === 1 && Math.abs(z) < 70) continue; /* keep the rest stop clear */
+      this.makeTree(x, z);
     }
   }
 
@@ -653,80 +690,6 @@ export class World {
     const g = 'park-' + x.toFixed(0) + '-' + z.toFixed(0);
     this.addBox('vehicle', MAT.VEHICLE, x, 0.75, z, 1.9, 1.0, 4.5, yaw, { group: g, collR: 2.4, tags });
     this.addBox('vehicle', MAT.GLASS, x, 1.55, z, 1.7, 0.7, 2.3, yaw, { group: g, collR: 0 });
-  }
-
-  private buildCity() {
-    const { cx, cz } = DISTRICTS.city;
-    const S = 92, N = 6;
-    const r = () => this.rng();
-    for (let br = 0; br < N; br++) for (let bc = 0; bc < N; bc++) {
-      const bx = cx + (bc - N / 2 + 0.5) * S;
-      const bz = cz + (br - N / 2 + 0.5) * S;
-      const inner = Math.abs(br - N / 2) < 1.6 && Math.abs(bc - N / 2) < 1.6;
-      if (r() < 0.12) { /* park block */
-        for (let t = 0; t < 12; t++) this.makeTree(bx + (r() - 0.5) * 60, bz + (r() - 0.5) * 60);
-        continue;
-      }
-      const roofProps = (rx: number, rz: number, topY: number, rw: number, rl: number) => {
-        /* AC units + antenna clutter — richer silhouettes for the scanner */
-        const n = 1 + Math.floor(r() * 3);
-        for (let k = 0; k < n; k++) {
-          const px = rx + (r() - 0.5) * rw * 0.55;
-          const pz = rz + (r() - 0.5) * rl * 0.55;
-          this.addBox('prop', MAT.METAL, px, topY + 0.8, pz, 2 + r() * 2.4, 1.4 + r() * 0.8, 2 + r() * 2.2, r() * 0.5, { collR: 0 });
-        }
-        if (r() < 0.55) {
-          this.addCylinder('prop', MAT.METAL, rx + (r() - 0.5) * rw * 0.4, topY, rz + (r() - 0.5) * rl * 0.4, 0.09, 3 + r() * 4, { collR: 0 });
-        }
-      };
-      if (inner) { /* downtown towers */
-        const h = 24 + r() * 26;
-        const bw = 34 + r() * 14, bl = 34 + r() * 14;
-        this.addBox('building', MAT.BUILDING, bx, h / 2, bz, bw, h, bl, 0, { tags: ['downtown'] });
-        if (r() < 0.6) this.addBox('building', MAT.GLASS, bx, h * 0.7, bz, bw * 0.86, h * 0.25, bl * 0.86, 0);
-        if (r() < 0.4) this.addCylinder('building', MAT.BUILDING, bx, h, bz, 4, 6 + r() * 8, {});
-        roofProps(bx, bz, h + (r() < 0.4 ? 6 : 0), bw, bl);
-      } else if (br < 2 || bc < 2) { /* residential */
-        const bw = 18 + r() * 10, bl = 18 + r() * 10, h = 5 + r() * 4;
-        this.addBox('building', MAT.BUILDING, bx - 14, h / 2, bz - 14, bw, h, bl, 0, { tags: ['residential'] });
-        this.addBox('building', MAT.BUILDING, bx + 16, h / 2 + 1, bz + 12, bw * 0.8, h + 2, bl * 0.8, 0.3, { tags: ['residential'] });
-        roofProps(bx - 14, bz - 14, h, bw, bl);
-        this.makeTree(bx + 2, bz - 26);
-        this.makeTree(bx - 28, bz + 4);
-      } else { /* commercial mid-rise */
-        const h = 10 + r() * 12;
-        const bw = 40 + r() * 12, bl = 30 + r() * 16;
-        this.addBox('building', MAT.BUILDING, bx, h / 2, bz, bw, h, bl, 0, { tags: ['commercial'] });
-        if (r() < 0.5) this.addBox('building', MAT.BUILDING, bx + 24, 4, bz + 22, 16, 8, 16, 0.2);
-        roofProps(bx, bz, h, bw, bl);
-        this.makeTree(bx - 30, bz + 30);
-      }
-    }
-    /* street furniture: lights + signs along avenues */
-    for (let rI = 0; rI <= N; rI++) for (let cI = 0; cI <= N; cI++) {
-      const nx = cx + (cI - N / 2) * S, nz = cz + (rI - N / 2) * S;
-      this.addCylinder('pole', MAT.METAL, nx + 10.5, 0, nz + 10.5, 0.3, 8.5, {});
-      this.addBox('prop', MAT.METAL, nx + 12, 8.6, nz + 10.5, 2.4, 0.25, 0.7, 0);
-      /* traffic light heads on two corners */
-      this.addCylinder('pole', MAT.METAL, nx - 10.5, 0, nz - 10.5, 0.28, 6.4, {});
-      this.addBox('light', MAT.METAL, nx - 9.2, 6.0, nz - 10.5, 0.7, 1.7, 0.55, Math.PI / 2, { group: 'tl-' + rI + '-' + cI });
-      if ((rI + cI) % 2 === 0) {
-        this.addCylinder('sign', MAT.METAL, nx + 11, 0, nz - 11, 0.14, 3.2, {});
-        this.addBox('sign', MAT.SIGN, nx + 11, 3.1, nz - 9.6, 1.5, 0.8, 0.08, 0, { group: 'sign-' + rI + '-' + cI, tags: ['roadsign'] });
-      }
-    }
-    /* parked cars along curbs */
-    for (let i = 0; i < 26; i++) {
-      const seg = this.roads[Math.floor(r() * this.roads.length)];
-      if (seg.kind !== 'street' && seg.kind !== 'avenue') continue;
-      const t = r();
-      const x = seg.ax + (seg.bx - seg.ax) * t + seg.nx * (seg.half + 1.6);
-      const z = seg.az + (seg.bz - seg.az) * t + seg.nz * (seg.half + 1.6);
-      this.makeParkedCar(x, z, Math.atan2(seg.dx, seg.dz) + (r() < 0.5 ? 0 : Math.PI));
-    }
-    /* construction zone props */
-    for (let i = 0; i < 8; i++) this.addCone('cone', MAT.BARRIER, cx - 120 + i * 9, 0, cz - 92, 0.5, 0.9, { tags: ['construction'] });
-    this.addBox('barrier', MAT.BARRIER, cx - 80, 1, cz - 92, 3, 2, 1, 0, { tags: ['construction'] });
   }
 
   private makeTree(x: number, z: number) {
@@ -739,102 +702,8 @@ export class World {
     this.addSphere('tree', MAT.TREE, x + (r() - 0.5) * 2.2, h + 2.1, z + (r() - 0.5) * 2.2, 1.1 + r() * 1.0, { group: g, collR: 0 });
   }
 
-  private buildHighway() {
-    const hz = DISTRICTS.highway.cz;
-    /* jersey barriers: median + edges */
-    for (let x = -1250; x <= 1450; x += 100) {
-      this.addBox('barrier', MAT.CONCRETE, x + 50, 0.55, hz, 100, 1.1, 0.6, 0, { collR: 0 });
-      this.addBox('barrier', MAT.METAL, x + 50, 1.0, hz - 21, 100, 1.4, 0.4, 0, { collR: 0, tags: ['highway-barrier'] });
-      this.addBox('barrier', MAT.METAL, x + 50, 1.0, hz + 21, 100, 1.4, 0.4, 0, { collR: 0, tags: ['highway-barrier'] });
-      if (Math.floor(x / 100) % 4 === 0) {
-        this.addCylinder('pole', MAT.METAL, x + 50, 0, hz + 26, 0.4, 11, {});
-        this.addBox('prop', MAT.METAL, x + 50, 11.1, hz + 26, 3, 0.3, 0.9, 0);
-      }
-    }
-    /* gantry sign */
-    this.addCylinder('pole', MAT.METAL, 200, 0, hz + 24, 0.6, 9, {});
-    this.addCylinder('pole', MAT.METAL, 260, 0, hz + 24, 0.6, 9, {});
-    this.addBox('sign', MAT.SIGN, 230, 8.4, hz + 24, 14, 3.4, 0.4, 0, { tags: ['gantry'] });
-  }
-
-  private buildIndustrial() {
-    const { cx, cz } = DISTRICTS.industrial;
-    const r = () => this.rng();
-    /* warehouses */
-    for (let i = 0; i < 6; i++) {
-      const wx = cx - 160 + (i % 3) * 130, wz = cz - 140 + Math.floor(i / 3) * 190;
-      this.addBox('building', MAT.METAL, wx, 7, wz, 90, 14, 52, (i % 3) * 0.06, { tags: ['warehouse'] });
-      this.addCylinder('prop', MAT.METAL, wx - 30, 0, wz + 34, 2.2, 9, { tags: ['silo'] });
-      this.addCylinder('prop', MAT.METAL, wx - 36, 0, wz + 34, 2.2, 9, { tags: ['silo'] });
-    }
-    /* container stacks */
-    for (let i = 0; i < 22; i++) {
-      const x = cx + 60 + (i % 7) * 13, z = cz - 40 + Math.floor(i / 7) * 34;
-      const rows = 1 + Math.floor(r() * 3);
-      for (let k = 0; k < rows; k++) {
-        this.addBox('obstacle', MAT.METAL, x, 1.35 + k * 2.7, z, 12.2, 2.6, 2.6, (r() - 0.5) * 0.1, { tags: ['container'] });
-      }
-    }
-    /* machinery + barrels */
-    for (let i = 0; i < 10; i++) {
-      this.addCylinder('obstacle', MAT.METAL, cx - 120 + r() * 260, 0, cz + 120 + r() * 140, 1.6, 2.4 + r() * 3, { tags: ['machine'] });
-    }
-    for (let i = 0; i < 14; i++) {
-      this.addCylinder('obstacle', MAT.METAL, cx - 200 + r() * 380, 0, cz + 60 + r() * 200, 0.42, 1.0, { tags: ['barrel'] });
-    }
-    /* loading dock trucks */
-    for (let i = 0; i < 4; i++) {
-      const x = cx - 160 + i * 105, z = cz - 108;
-      const g = 'docktruck-' + i;
-      this.addBox('truck', MAT.VEHICLE, x, 1.9, z, 2.6, 2.8, 7.5, Math.PI, { group: g, collR: 3.6, tags: ['delivery-truck'] });
-      this.addBox('truck', MAT.METAL, x, 2.4, z + 6.4, 2.7, 3.4, 7.8, Math.PI, { group: g, collR: 0 });
-    }
-  }
-
   private buildMountain() {
-    const path = this.nodes.filter(n => n.district === 'mountain');
-    const r = () => this.rng();
-    /* trees + rocks along the road */
-    for (let i = 0; i < 240; i++) {
-      const seg = this.roads.filter(s => s.kind === 'rural');
-      const s = seg[Math.floor(r() * seg.length)];
-      if (!s) continue;
-      const t = r();
-      const side = r() < 0.5 ? 1 : -1;
-      const off = 9 + r() * 46;
-      const x = s.ax + (s.bx - s.ax) * t + s.nx * side * off;
-      const z = s.az + (s.bz - s.az) * t + s.nz * side * off;
-      if (r() < 0.8) this.makeTree(x, z);
-      else this.addSphere('rock', MAT.ROCK, x, 0.4, z, 0.9 + r() * 2.4, { collR: 1.8, tags: ['boulder'] });
-    }
-    /* scenic hills (large cones) */
-    for (let i = 0; i < 14; i++) {
-      const a = (i / 14) * Math.PI * 2;
-      const d = 420 + r() * 260;
-      this.addCone('building', MAT.GRASS, DISTRICTS.mountain.cx + Math.cos(a) * d, 0, DISTRICTS.mountain.cz + Math.sin(a) * d, 90 + r() * 120, 60 + r() * 90, { collR: 0, tags: ['hill'] });
-    }
-    /* TUNNEL over one rural segment */
-    const tunnelSeg = this.roads.find(s => s.kind === 'rural' && s.len > 100);
-    if (tunnelSeg) {
-      const steps = Math.floor(tunnelSeg.len / 12);
-      for (let i = 0; i <= steps; i++) {
-        const t = i / steps;
-        const x = tunnelSeg.ax + (tunnelSeg.bx - tunnelSeg.ax) * t;
-        const z = tunnelSeg.az + (tunnelSeg.bz - tunnelSeg.az) * t;
-        const yaw = Math.atan2(tunnelSeg.dx, tunnelSeg.dz);
-        this.addBox('building', MAT.CONCRETE, x + tunnelSeg.nx * 7.5, 3, z + tunnelSeg.nz * 7.5, 1.4, 6, 12.4, yaw, { group: 'tunnel', collR: 0, tags: ['tunnel'] });
-        this.addBox('building', MAT.CONCRETE, x - tunnelSeg.nx * 7.5, 3, z - tunnelSeg.nz * 7.5, 1.4, 6, 12.4, yaw, { group: 'tunnel', collR: 0, tags: ['tunnel'] });
-        this.addBox('building', MAT.CONCRETE, x, 6.4, z, 17, 1.2, 12.4, yaw, { group: 'tunnel', collR: 0, tags: ['tunnel'] });
-      }
-      (tunnelSeg as any).tunnel = true;
-    }
-    /* guard posts */
-    for (let i = 0; i < 10; i++) {
-      const s = this.roads.filter(sg => sg.kind === 'rural')[i % 8];
-      if (!s) continue;
-      const t = 0.2 + r() * 0.6;
-      this.addBox('barrier', MAT.BARRIER, s.ax + (s.bx - s.ax) * t + s.nx * 7, 0.6, s.az + (s.bz - s.az) * t + s.nz * 7, 2.4, 1.2, 0.5, Math.atan2(s.dx, s.dz), { collR: 0 });
-    }
+    /* replaced by buildInterstate — kept as no-op for compatibility */
   }
 
   chargePads: { x: number; z: number }[] = [];
@@ -848,38 +717,15 @@ export class World {
   }
 
   private buildChargePads() {
-    this.addChargePad(DISTRICTS.facility.cx + 60, DISTRICTS.facility.cz, 0);
-    this.addChargePad(DISTRICTS.city.cx - 46, DISTRICTS.city.cz - 46, Math.PI / 4);
-    this.addChargePad(600, DISTRICTS.highway.cz + 40, 0);
-    this.addChargePad(DISTRICTS.industrial.cx - 100, DISTRICTS.industrial.cz + 90, 0);
-    this.addChargePad(DISTRICTS.mountain.cx - 60, DISTRICTS.mountain.cz - 180, 0.6);
-    this.addChargePad(DISTRICTS.experimental.cx - 90, DISTRICTS.experimental.cz + 60, 0);
+    this.addChargePad(-23, -1500, 0);           /* test sector shoulder */
+    this.addChargePad(44, 0, Math.PI / 2);      /* rest stop apron */
+    this.addChargePad(23, 300, 0);              /* freight shoulder */
+    this.addChargePad(23, 810, 0);              /* ridge shoulder */
+    this.addChargePad(23, 1300, 0);             /* polar gate shoulder */
   }
 
   private buildExperimental() {
-    const { cx, cz } = DISTRICTS.experimental;
-    const r = () => this.rng();
-    /* low-reflectivity monoliths */
-    for (let i = 0; i < 16; i++) {
-      const a = (i / 16) * Math.PI * 2;
-      const d = 60 + r() * 110;
-      const h = 8 + r() * 22;
-      this.addBox('building', MAT.DARK, cx + Math.cos(a) * d, h / 2, cz + Math.sin(a) * d, 6 + r() * 14, h, 6 + r() * 14, r() * Math.PI, { tags: ['monolith'] });
-    }
-    /* central spire complex */
-    this.addCylinder('building', MAT.DARK, cx, 0, cz, 9, 46, { tags: ['spire'] });
-    this.addSphere('building', MAT.DARK, cx, 48, cz, 7, { tags: ['spire'] });
-    for (let i = 0; i < 5; i++) {
-      const a = (i / 5) * Math.PI * 2;
-      this.addCylinder('building', MAT.DARK, cx + Math.cos(a) * 26, 0, cz + Math.sin(a) * 26, 3, 20 + r() * 16, { tags: ['spire'] });
-    }
-    /* perimiter fence (dark, low) */
-    for (let i = 0; i < 4; i++) {
-      const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
-      this.addBox('barrier', MAT.DARK, cx + Math.cos(a) * 185, 1.4, cz + Math.sin(a) * 185, 250, 2.8, 0.5, a + Math.PI / 2, { collR: 0, tags: ['exp-fence'] });
-    }
-    /* test pads */
-    this.addBox('prop', MAT.PAINT, cx - 80, 0.02, cz - 80, 40, 0.05, 40, 0, { collR: 0 });
+    /* replaced by buildInterstate — kept as no-op for compatibility */
   }
 
   /* ---------------- traffic & pedestrians ---------------- */
@@ -890,8 +736,10 @@ export class World {
       const seg = drivable[Math.floor(this.rng() * drivable.length)];
       const dir: 1 | 2 = seg.oneway === 1 ? 1 : seg.oneway === 2 ? 2 : (this.rng() < 0.5 ? 1 : 2);
       const isHighway = seg.kind === 'highway';
-      const truck = isHighway && this.rng() < 0.25;
-      const lateral = (this.rng() < 0.5 ? -1 : 1) * (1.75 + (this.rng() < 0.4 ? 3.5 : 0)) * (dir === 1 ? 1 : -1);
+      const truck = isHighway && this.rng() < 0.38;
+      /* 3-lane discipline: lanes at 1.75 / 5.25 / 8.75 from the centerline (clamped to narrow ramps) */
+      const lane = Math.min([1.75, 5.25, 8.75][Math.floor(this.rng() * 3)], Math.max(1.75, seg.half - 1.75));
+      const lateral = lane * (this.rng() < 0.5 ? -1 : 1) * (dir === 1 ? 1 : -1);
       const g = 'traffic-' + i;
       const obj = truck
         ? this.addObj({ kind: 0, cls: 'truck', mat: MAT.VEHICLE, x: 0, y: 1.6, z: 0, yaw: 0, hw: 1.3, hh: 1.7, hl: 4.2, dynamic: true, group: g, collR: 3.2, tags: ['moving-truck'] })
@@ -905,7 +753,7 @@ export class World {
       }
       const agent: Agent = {
         obj, kind: truck ? 'truck' : 'car', seg: this.roads.indexOf(seg), dir, s: this.rng() * seg.len,
-        lateral, speed: 0, targetSpeed: isHighway ? 24 + this.rng() * 9 : 7 + this.rng() * 5,
+        lateral, speed: 0, targetSpeed: truck ? 20 + this.rng() * 6 : (isHighway ? 24 + this.rng() * 9 : 7 + this.rng() * 5),
         yaw: 0, crossing: -1, crossedTo: 0, waitTimer: 0
       };
       this.agents.push(agent);
@@ -988,6 +836,10 @@ export class World {
           a.dir = s2.aNode === nodeId ? 1 : 2;
           a.s = a.dir === 1 ? 0.1 : s2.len - 0.1;
           a.speed *= 0.6;
+          /* match the new segment's pace (slow on the U-turn loops) */
+          const isTruck = a.kind === 'truck';
+          a.targetSpeed = s2.kind === 'ramp' ? 8 + this.rng() * 3
+            : isTruck ? 20 + this.rng() * 6 : 24 + this.rng() * 9;
         } else { a.s = Math.max(0.1, Math.min(seg.len - 0.1, a.s)); a.speed = 0; }
       }
       /* position */
@@ -1156,14 +1008,14 @@ export interface POI {
 }
 
 export const POIS: POI[] = [
-  { id: 'poi-tower',    name: 'CONTROL TOWER',    x: -700, z: -700, r: 42, region: 'facility',     reward: { cr: 60, rd: 8, xp: 10 } },
-  { id: 'poi-pylons',   name: 'SENSOR PYLONS',    x: -470, z: -700, r: 40, region: 'facility',     reward: { cr: 50, rd: 6, xp: 8 } },
-  { id: 'poi-towers',   name: 'THE TWIN TOWERS',  x: 396,  z: 296,  r: 38, region: 'city',         reward: { cr: 110, rd: 14, xp: 18 } },
-  { id: 'poi-park',     name: 'CITY ORCHARD',     x: 258,  z: 434,  r: 36, region: 'city',         reward: { cr: 70, rd: 9, xp: 12 } },
-  { id: 'poi-gantry',   name: 'GATEWAY GANTRY',   x: 230,  z: -1026, r: 46, region: 'highway',     reward: { cr: 120, rd: 16, xp: 20 } },
-  { id: 'poi-yard',     name: 'CONTAINER YARD',   x: 1150, z: 500,  r: 48, region: 'industrial',   reward: { cr: 130, rd: 18, xp: 22 } },
-  { id: 'poi-silos',    name: 'SILO ROW',         x: 860,  z: 394,  r: 30, region: 'industrial',   reward: { cr: 90, rd: 12, xp: 15 } },
-  { id: 'poi-tunnel',   name: 'MOUNTAIN TUNNEL',  x: -1070, z: 170, r: 42, region: 'mountain',     reward: { cr: 140, rd: 20, xp: 24 } },
-  { id: 'poi-overlook', name: 'WEST OVERLOOK',    x: -840, z: 520,  r: 38, region: 'mountain',     reward: { cr: 120, rd: 16, xp: 20 } },
-  { id: 'poi-spire',    name: 'THE SPIRE',        x: 950,  z: -620, r: 52, region: 'experimental', reward: { cr: 200, rd: 30, xp: 35 } }
+  { id: 'poi-sloop',    name: 'SOUTH LOOP GATE',  x: 0,    z: -1520, r: 44, region: 'facility',     reward: { cr: 60, rd: 8, xp: 10 } },
+  { id: 'poi-cones',    name: 'CONE COURSE',      x: -23,  z: -1300, r: 38, region: 'facility',     reward: { cr: 50, rd: 6, xp: 8 } },
+  { id: 'poi-pylons',   name: 'RANGE PYLONS',     x: 23,   z: -1250, r: 38, region: 'facility',     reward: { cr: 70, rd: 9, xp: 12 } },
+  { id: 'poi-meridian', name: 'MERIDIAN GANTRY',  x: -9,   z: -750,  r: 40, region: 'city',         reward: { cr: 110, rd: 14, xp: 18 } },
+  { id: 'poi-rest',     name: 'REST STOP 66',     x: 44,   z: 0,     r: 46, region: 'highway',      reward: { cr: 120, rd: 16, xp: 20 } },
+  { id: 'poi-freight',  name: 'FREIGHT YARD',     x: 60,   z: 300,   r: 46, region: 'industrial',   reward: { cr: 130, rd: 18, xp: 22 } },
+  { id: 'poi-silos',    name: 'SILO ROW',         x: 86,   z: 300,   r: 34, region: 'industrial',   reward: { cr: 90, rd: 12, xp: 15 } },
+  { id: 'poi-ridge',    name: 'RIDGE OVERLOOK',   x: -40,  z: 810,   r: 40, region: 'mountain',     reward: { cr: 120, rd: 16, xp: 20 } },
+  { id: 'poi-tower',    name: 'DOPPLER TOWER',    x: 0,    z: 1333,  r: 42, region: 'experimental', reward: { cr: 200, rd: 30, xp: 35 } },
+  { id: 'poi-nloop',    name: 'NORTH LOOP GATE',  x: 0,    z: 1520,  r: 44, region: 'experimental', reward: { cr: 140, rd: 20, xp: 24 } }
 ];

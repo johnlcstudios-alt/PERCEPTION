@@ -29,6 +29,9 @@ export class AutonomyDriver {
   interventionLatch = 0;
   private cruiseSpeed = 13;
   private steerAssistTimer = 0;
+  /* GNSS-RTK + IMU localization pod active (set from profile by the game):
+     tighter lane-keeping center correction and steadier low-confidence behavior */
+  gnss = false;
 
   setMode(m: number) {
     this.mode = m;
@@ -147,13 +150,16 @@ export class AutonomyDriver {
       if (weather.id === 'heavyrain' || weather.id === 'fog') vDesired = Math.min(vDesired, 13);
       if (weather.id === 'dust') vDesired = Math.min(vDesired, 11);
 
-      /* road confidence gating - conservative behavior on uncertainty */
-      if (!road.valid || road.confidence < 0.15) {
+      /* road confidence gating - conservative behavior on uncertainty
+         (GNSS/IMU fusion relaxes the thresholds: dead-reckoned position stays valid) */
+      const hardFloor = this.gnss ? 0.1 : 0.15;
+      const softFloor = this.gnss ? 0.28 : 0.35;
+      if (!road.valid || road.confidence < hardFloor) {
         this.lowConfTimer += dt;
         vDesired = 0;
         this.status = this.lowConfTimer > 4 ? 'REQUESTING MANUAL INTERVENTION' : 'STOPPED - LOW CONFIDENCE';
         warn = true;
-      } else if (road.confidence < 0.35) {
+      } else if (road.confidence < softFloor) {
         this.lowConfTimer = 0;
         vDesired = Math.min(vDesired, 6.5);
         this.status = 'LOW CONFIDENCE - SLOWING';
@@ -226,8 +232,8 @@ export class AutonomyDriver {
         const fdx = tgt.x - vx, fdz = tgt.z - vz;
         const flocal = fdx * Math.sin(vyaw) + fdz * Math.cos(vyaw);
         let llocal = fdx * Math.cos(vyaw) - fdz * Math.sin(vyaw);
-        /* lane center correction: aim along corridor center */
-        if (road.valid && !tgt.final) llocal += clamp(road.lateralOffset, -road.width, road.width) * 0.9;
+        /* lane center correction: aim along corridor center (GNSS tightens it) */
+        if (road.valid && !tgt.final) llocal += clamp(road.lateralOffset, -road.width, road.width) * (this.gnss ? 1.4 : 0.9);
         llocal += this.avoidBias * 3.0;
         const L = Math.max(4, Math.hypot(flocal, llocal));
         const alpha = Math.atan2(llocal, flocal);
@@ -254,7 +260,7 @@ export class AutonomyDriver {
       }
       if (this.steerAssistTimer > 0) {
         this.steerAssistTimer -= dt;
-        const corr = clamp(road.lateralOffset * -0.12, -0.25, 0.25);
+        const corr = clamp(road.lateralOffset * (this.gnss ? -0.2 : -0.12), -0.3, 0.3);
         vehicle.ctrl.steer = clamp(vehicle.ctrl.steer + corr, -1, 1);
       }
     }

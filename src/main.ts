@@ -5,7 +5,7 @@ import { QUALITY, WEATHER, PAL, VIZ_MODES, REP_UNLOCKS } from './config';
 import { Input, clamp, damp, angleDiff } from './input';
 import { audio } from './audio';
 import { World, DISTRICTS, POIS } from './world';
-import { LidarSystem, SENSORS } from './lidar';
+import { LidarSystem, SENSORS, AUX_SENSORS } from './lidar';
 import { PerceptionEngine } from './perception';
 import { Vehicle, VEHICLES } from './vehicle';
 import { AutonomyDriver } from './autonomy';
@@ -81,7 +81,7 @@ class Game {
     /* world */
     this.world = new World(20261126);
     this.world.buildDistricts();
-    this.world.spawnTraffic(64, 36);
+    this.world.spawnTraffic(120, 8);
 
     /* lidar + perception */
     this.lidar = new LidarSystem(this.scene, this.world, QUALITY[save.profile.settings.quality] ?? QUALITY.high);
@@ -108,6 +108,7 @@ class Game {
       onFreeRoam: (region) => this.startFreeRoam(region),
       onEquipmentChanged: () => { this.applyEquipment(); this.menu.showScreen('menu-screen'); this.menu.renderMain(); },
       onSettingsChanged: () => this.applySettings(),
+      onProfileEdited: () => this.applyEquipment(),
       onResume: () => this.resume(),
       onRestartMission: () => { if (this.mission.def) this.startMission(this.mission.def); },
       onAbort: () => this.toMenu(),
@@ -156,6 +157,10 @@ class Game {
     const extraCh = Math.round((p.upgrades['channels'] ?? 0) * 2);
     const spec = extraCh > 0 ? { ...base, channels: base.channels + extraCh } : base;
     this.lidar.setSensor(spec);
+    /* auxiliary pods: radar / camera / proximity / ultrasonic / GNSS fusion */
+    const activeAux = p.activeAux ?? [];
+    this.lidar.setAuxSensors(AUX_SENSORS.filter(a => activeAux.includes(a.id)));
+    this.autonomy.gnss = activeAux.includes('gnss');
     const up = p.upgrades;
     this.lidar.applyUpgrades({
       freq: (up['scanFreq'] ?? 0) * 0.12,
@@ -179,8 +184,12 @@ class Game {
     const q = QUALITY[s.quality] ?? QUALITY.high;
     this.lidar.setQuality(q);
     this.lidar.setSweepVisible(s.sweep);
-    const life = typeof s.pointLife === 'number' && isFinite(s.pointLife) ? clamp(s.pointLife, 1, 30) : 4;
-    this.lidar.setLife(life);
+    const life = typeof s.pointLife === 'number' && isFinite(s.pointLife) ? clamp(s.pointLife, 1, 120) : 4;
+    /* "keep forever": large finite life so the shader fade never kicks in;
+       points persist until the ring buffer recycles them */
+    this.lidar.setLife(s.pointForever === true ? 1e9 : life);
+    const sweepMul = typeof s.sweepSpeed === 'number' && isFinite(s.sweepSpeed) ? s.sweepSpeed : 1;
+    this.lidar.setSweepSpeed(sweepMul);
     this.camera.fov = s.fov;
     this.camera.updateProjectionMatrix();
     audio.setVolume(s.volume);
@@ -323,6 +332,11 @@ class Game {
       if (this.input.justPressed('F2')) this.saveScreenshot(true);
       this.input.endFrame();
       return;
+    }
+
+    /* map state: M / ESC close the map (step() is paused while the map is open) */
+    if (this.state === 'map' && (this.input.justPressed('Escape') || this.input.justPressed('KeyM'))) {
+      this.toggleMap();
     }
 
     if (this.state === 'driving') {
@@ -669,7 +683,9 @@ class Game {
     /* day cycle: 24h per 20 min */
     this.dayTime = (this.dayTime + dt * (24 / 1200)) % 24;
     const w = WEATHER[this.weatherId];
+    /* note: 'night' is 1 at midday, 0 at midnight — it is the daylight factor */
     const night = clamp(Math.cos((this.dayTime - 13) / 24 * Math.PI * 2) * 0.5 + 0.5, 0, 1);
+    this.lidar.setDaylight(night);
     const bg = new THREE.Color(PAL.bg).lerp(new THREE.Color(0x0a1424), (1 - night) * 0.5);
     this.renderer.setClearColor(bg);
     this.fog.density = w.fogDensity * (0.75 + 0.25 * (1 - night));
@@ -811,8 +827,12 @@ class Game {
     this.hud.setWarning('battery', v.battery < 15 ? 'LOW BATTERY' : null, 'amber');
     this.hud.setWarning('damage', v.damage > 0.7 ? 'DAMAGE CRITICAL' : null);
 
+    const gnssOn = (this.profile.activeAux ?? []).includes('gnss');
+    const lat = 34.0522 - v.pos.z * 9e-6, lon = -118.2437 + v.pos.x * 1.1e-5;
     this.hud.update({
       sensorModel: lid.spec.model,
+      aux: lid.auxList.map(a => a.name.split(' ')[0]).join(' + '),
+      gnss: gnssOn ? `RTK ${lat.toFixed(4)} ${lon.toFixed(4)}` : 'NO FIX',
       sensorHz: lid.effectiveHz < 1 ? lid.effectiveSpec().scanHz : lid.effectiveHz,
       sensorRange: lid.lastRange,
       density: lid.pointsPerSec,
@@ -976,6 +996,34 @@ const boot = async () => {
             g.applySettings();
           }, 120);
         }, 5500);
+        /* feature test: auxiliary sensors — radar / camera / proximity / ultrasonic / GNSS (self-restoring) */
+        setTimeout(() => {
+          try {
+            const base = Math.round(g.lidar.pointsPerSec);
+            const keep = { owned: [...(g.profile.auxSensors ?? [])], active: [...(g.profile.activeAux ?? [])] };
+            g.profile.auxSensors = ['radar', 'camera', 'proximity', 'ultrasonic'];
+            g.profile.activeAux = ['radar', 'camera', 'proximity', 'ultrasonic'];
+            g.applyEquipment();
+            setTimeout(() => {
+              console.error('[AUX] base=' + base + ' fused=' + Math.round(g.lidar.pointsPerSec) +
+                ' pods=' + g.lidar.auxList.map((a: any) => a.id).join(','));
+              const day = g.lidar.daylight;
+              g.lidar.setDaylight(0);
+              setTimeout(() => {
+                console.error('[AUX] cameraNight daylight=' + day.toFixed(2) + ' hz=' + g.lidar.effectiveHz.toFixed(1) +
+                  ' pps=' + Math.round(g.lidar.pointsPerSec));
+                g.lidar.setDaylight(day);
+                g.profile.activeAux = [...g.profile.activeAux, 'gnss'];
+                g.applyEquipment();
+                setTimeout(() => {
+                  console.error('[GNSS] flag=' + (g.autonomy as any).gnss + ' pods=' + g.lidar.auxList.map((a: any) => a.id).join(','));
+                  g.profile.auxSensors = keep.owned; g.profile.activeAux = keep.active;
+                  g.applyEquipment();
+                }, 400);
+              }, 1500);
+            }, 2500);
+          } catch (ae) { console.error('[AUX] ERR ' + (ae && ae.stack || ae)); }
+        }, 6200);
         setTimeout(() => { g.requestScreenshot = true; }, 7300);
         setTimeout(() => { g.camMode = 2; }, 7450);
         setTimeout(() => { g.requestScreenshot = 'cockpit-shot'; }, 7800);

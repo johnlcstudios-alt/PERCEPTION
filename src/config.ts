@@ -79,12 +79,12 @@ mat(MAT.ROCK,        0.28, 'TERRAIN',     0.60, 0.58, 0.55);
 mat(MAT.BARRIER,     0.50, 'BARRIER',     1.00, 0.60, 0.25);
 
 export const REP_UNLOCKS: { rep: number; region: string; label: string }[] = [
-  { rep: 0,    region: 'facility',     label: 'Testing Facility' },
-  { rep: 80,   region: 'city',         label: 'PERCEPTION City' },
-  { rep: 220,  region: 'highway',      label: 'Highway Network' },
-  { rep: 420,  region: 'industrial',   label: 'Industrial District' },
-  { rep: 650,  region: 'mountain',     label: 'Mountain Roads' },
-  { rep: 950,  region: 'experimental', label: 'Experimental Zone' }
+  { rep: 0,    region: 'facility',     label: 'Test Sector (south)' },
+  { rep: 80,   region: 'city',         label: 'Meridian Sector' },
+  { rep: 220,  region: 'highway',      label: 'Interstate Core' },
+  { rep: 420,  region: 'industrial',   label: 'Freight Sector' },
+  { rep: 650,  region: 'mountain',     label: 'Ridge Pass' },
+  { rep: 950,  region: 'experimental', label: 'Polar Gate (north)' }
 ];
 
 export const AUTONOMY_MODES = [

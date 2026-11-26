@@ -33,6 +33,41 @@ export const SENSORS: SensorSpec[] = [
   { model: 'LDR-X EXPERIMENTAL', tier: 7, scanHz: 30, maxRange: 280, channels: 64, vFovBottom: -32, vFovTop: 20, azStepDeg: 0.16, noiseM: 0.010, dropout: 0.007, latencyMs: 16,  procDelayMs: 30, price: 260000 }
 ];
 
+/* auxiliary sensor pods — fuse extra returns into the same point cloud.
+   Each has its own geometry, weather response and ray budget.
+   localization pods (GNSS/IMU) contribute no points; they sharpen navigation. */
+export interface AuxSpec {
+  id: 'radar' | 'camera' | 'proximity' | 'ultrasonic' | 'gnss';
+  name: string;
+  desc: string;
+  price: number;
+  scanHz: number;
+  maxRange: number;
+  channels: number;
+  chBottom: number; chTop: number;
+  azStepDeg: number;
+  noiseM: number;
+  dropout: number;
+  latencyMs: number;
+  immune: number; // 0..1 weather immunity (1 = sees through weather)
+  cap: number;    // max rays/s contributed to the frame ray budget
+  fwdArcDeg?: number;     // if set, only trace inside this forward arc (vehicle-relative)
+  localization?: boolean; // GNSS/IMU pod: no returns, boosts autonomy/localization
+}
+
+export const AUX_SENSORS: AuxSpec[] = [
+  { id: 'radar', name: 'RD-77 LONGSHOT RADAR', desc: '77 GHz imaging radar. Punches through rain, fog and dust — sees where LiDAR goes blind.', price: 24000,
+    scanHz: 12, maxRange: 250, channels: 4, chBottom: -12, chTop: 6, azStepDeg: 3, noiseM: 0.14, dropout: 0.03, latencyMs: 40, immune: 0.9, cap: 3200 },
+  { id: 'camera', name: 'CAM-HD STEREO', desc: 'Dense stereo vision pod. Massive point density and fine detail — but it needs light, and hates bad weather.', price: 15000,
+    scanHz: 24, maxRange: 85, channels: 6, chBottom: -10, chTop: 14, azStepDeg: 0.4, noiseM: 0.03, dropout: 0.02, latencyMs: 55, immune: 0.12, cap: 15000 },
+  { id: 'proximity', name: 'ULS-24 ULTRASONIC RING', desc: '24-beam ultrasonic ring, 360° coverage. Ultra-short range, razor sharp, immune to weather. Perfect for tight quarters.', price: 7500,
+    scanHz: 8, maxRange: 9, channels: 1, chBottom: -6, chTop: 3, azStepDeg: 15, noiseM: 0.02, dropout: 0.01, latencyMs: 25, immune: 1, cap: 300 },
+  { id: 'ultrasonic', name: 'US-8 ULTRASONIC SPOTTER', desc: 'Forward ultrasonic parking array. A tight 110° arc of pure clarity five meters out — nothing within five meters escapes it.', price: 3500,
+    scanHz: 30, maxRange: 5, channels: 1, chBottom: -5, chTop: 2, azStepDeg: 6, noiseM: 0.015, dropout: 0.01, latencyMs: 18, immune: 1, cap: 700, fwdArcDeg: 110 },
+  { id: 'gnss', name: 'GNSS-RTK LOCATOR', desc: 'RTK satellite positioning fused with an inertial unit. Sharpens lane-keeping, steadies autonomy in low confidence, and shows live coordinates. Emits no returns.', price: 12000,
+    scanHz: 0, maxRange: 0, channels: 0, chBottom: 0, chTop: 0, azStepDeg: 0, noiseM: 0, dropout: 0, latencyMs: 0, immune: 1, cap: 0, localization: true }
+];
+
 const QUEUE_CAP = 1 << 18;
 const QFLOATS = 7;
 
@@ -262,13 +297,29 @@ export class LidarSystem {
   }
   setSweepVisible(v: boolean) { this.sweep.visible = v; }
 
+  /* sweep speed multiplier (Settings -> SWEEP SPEED): scales the scan/rotation rate */
+  sweepMul = 1;
+  setSweepSpeed(mul: number) {
+    this.sweepMul = Math.max(0.1, Math.min(4, isFinite(mul) ? mul : 1));
+  }
+
+  /* auxiliary sensor fusion (radar / camera / proximity) */
+  auxList: AuxSpec[] = [];
+  private auxState = new Map<string, { az: number }>();
+  daylight = 1; // 1 = full day, 0 = midnight (camera performance)
+  setDaylight(v: number) { this.daylight = Math.max(0, Math.min(1, isFinite(v) ? v : 1)); }
+  setAuxSensors(list: AuxSpec[]) {
+    this.auxList = list;
+    for (const id of [...this.auxState.keys()]) if (!list.find(a => a.id === id)) this.auxState.delete(id);
+  }
+
   effectiveSpec() {
     const s = this.spec;
     return {
       channels: s.channels,
       vFovBottom: s.vFovBottom,
       vFovTop: s.vFovTop,
-      scanHz: s.scanHz * (1 + this.upFreq),
+      scanHz: s.scanHz * (1 + this.upFreq) * this.sweepMul,
       maxRange: s.maxRange * (1 + this.upRange),
       azStepDeg: s.azStepDeg * Math.max(0.35, 1 - this.upAz),
       noiseM: s.noiseM * Math.max(0.25, 1 - this.upNoise),
@@ -383,10 +434,72 @@ export class LidarSystem {
       }
     }
 
+    /* ---- auxiliary sensors: radar / camera / proximity fusion returns ---- */
+    let auxTraced = 0;
+    if (this.auxList.length) {
+      let auxPool = Math.max(120, Math.round(this.budget * 0.35)); // aux rays share the frame ray budget
+      for (const a of this.auxList) {
+        if (auxPool <= 0) break;
+        if (a.localization) continue; // GNSS/IMU pods emit no returns
+        let st = this.auxState.get(a.id);
+        if (!st) { st = { az: 0 }; this.auxState.set(a.id, st); }
+        const rangeMul = 1 + (weather.rangeMul - 1) * (1 - a.immune);
+        const noiseMul = (1 + (weather.noiseMul - 1) * (1 - a.immune)) * (1 + this.interference * 4);
+        const drop = Math.min(0.5, weather.dropout * (1 - a.immune) + a.dropout);
+        let range = a.maxRange * rangeMul;
+        let noise = a.noiseM * noiseMul;
+        if (a.id === 'camera') {
+          /* camera needs light: range collapses and noise explodes at night */
+          range *= 0.15 + 0.85 * this.daylight;
+          noise *= 1 + (1 - this.daylight) * 3;
+        }
+        const azStep = a.azStepDeg * Math.PI / 180;
+        const raysPerSec = (Math.PI * 2 / azStep) * a.channels * a.scanHz;
+        let allow = Math.min(a.cap, raysPerSec * dt + 24, auxPool);
+        const chCos: number[] = [], chSin: number[] = [];
+        for (let ch = 0; ch < a.channels; ch++) {
+          const v = (a.chBottom + (ch / Math.max(1, a.channels - 1)) * (a.chTop - a.chBottom)) * Math.PI / 180;
+          chCos.push(Math.cos(v)); chSin.push(Math.sin(v));
+        }
+        while (allow > 0 && auxPool > 0) {
+          const steps = Math.max(1, Math.min(Math.floor(allow / a.channels), 48));
+          for (let stp = 0; stp < steps; stp++) {
+            const az = st.az + stp * azStep;
+            /* forward-arc sensors (ultrasonic spotter) only trace inside their arc */
+            if (a.fwdArcDeg !== undefined) {
+              let rel = az % (Math.PI * 2);
+              if (rel > Math.PI) rel -= Math.PI * 2;
+              if (rel < -Math.PI) rel += Math.PI * 2;
+              if (Math.abs(rel) > a.fwdArcDeg * Math.PI / 360) continue;
+            }
+            const sa = Math.sin(az), ca = Math.cos(az);
+            for (let ch = 0; ch < a.channels; ch++) {
+              const lxc = sa * chCos[ch], lyc = chSin[ch], lzc = ca * chCos[ch];
+              const dx2 = c * lxc + s * lzc;
+              const dz2 = -s * lxc + c * lzc;
+              const hit = this.world.raycast(sx, sy, sz, dx2, lyc, dz2, range);
+              if (!hit) continue;
+              const rel = hit.t / range;
+              if (Math.random() < drop + rel * 0.05) continue;
+              const tN = hit.t * (1 + (Math.random() + Math.random() - 1) * noise * damageMul * Math.pow(rel + 0.15, 1.4) * 8);
+              const intensity = this.computeIntensity(hit, rel);
+              const px = sx + dx2 * tN, py = sy + lyc * tN + (Math.random() - 0.5) * noise * damageMul * 3, pz = sz + dz2 * tN;
+              this.enqueuePoint(px, py, pz, intensity, hit.mat, hit.t, now + a.latencyMs / 1000);
+              auxTraced++;
+            }
+          }
+          allow -= steps * a.channels;
+          auxPool -= steps * a.channels;
+          st.az += steps * azStep;
+          if (st.az >= Math.PI * 2) st.az -= Math.PI * 2;
+        }
+      }
+    }
+
     this.lastTraced = traced; this.lastRays = rays;
     const elapsed = performance.now() - t0;
     this.rayMsEMA = this.rayMsEMA * 0.9 + (elapsed / Math.max(1, rays)) * 0.1;
-    this.pointsPerSec = this.pointsPerSec * 0.8 + (traced / Math.max(1e-4, dt)) * 0.2;
+    this.pointsPerSec = this.pointsPerSec * 0.8 + ((traced + auxTraced) / Math.max(1e-4, dt)) * 0.2;
     this.raysPerSec = raysPerSec;
     this.budgetLimited = raysPerSec > this.budget * 60 * 1.15;
 

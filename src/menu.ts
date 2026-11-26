@@ -2,7 +2,7 @@
 
 import { Profile, save } from './save';
 import { MISSIONS, MissionDef, MissionResult } from './missions';
-import { SENSORS } from './lidar';
+import { SENSORS, AUX_SENSORS } from './lidar';
 import { VEHICLES, VehicleSpec } from './vehicle';
 import { UPGRADES, RESEARCH, PAINTS, RANKS } from './data';
 import { REP_UNLOCKS, QUALITY } from './config';
@@ -14,6 +14,7 @@ export interface MenuCallbacks {
   onFreeRoam: (region: string) => void;
   onEquipmentChanged: () => void;
   onSettingsChanged: () => void;
+  onProfileEdited: () => void;
   onResume: () => void;
   onRestartMission: () => void;
   onAbort: () => void;
@@ -115,7 +116,7 @@ export class MenuSystem {
         const unlocked = rep >= (REP_UNLOCKS.find(u => u.region === r.region)?.rep ?? 0);
         const row = document.createElement('div');
         row.className = 'mission-row' + (unlocked ? '' : ' locked');
-        row.innerHTML = `<span class='mission-name'>${r.label}</span><span class='mission-brief'>${unlocked ? 'Free roam — drive, scan, discover' : 'Requires ' + r.rep + ' reputation'}</span>` +
+        row.innerHTML = `<span class='mission-name'>${r.label}</span><span class='mission-brief'>${unlocked ? 'Endless interstate — drive, scan, dodge traffic' : 'Requires ' + r.rep + ' reputation'}</span>` +
           (unlocked ? "<span class='mission-play'>DRIVE</span>" : '');
         if (unlocked) row.addEventListener('click', () => { audio.click(); this.cb.onFreeRoam(r.region); });
         box.appendChild(row);
@@ -133,7 +134,7 @@ export class MenuSystem {
     for (const [ch, list] of [...chapters.entries()].sort((a, b) => a[0] - b[0])) {
       const box = document.createElement('div');
       box.className = 'chapter' + (prevComplete ? '' : ' chapter-locked');
-      const names = ['FIRST CONTACT', 'LEARNING TO PERCEIVE', 'URBAN NAVIGATION', 'HIGH-SPEED PERCEPTION', 'ENVIRONMENTAL CHALLENGES', 'THE AUTONOMOUS FUTURE'];
+      const names = ['FIRST CONTACT', 'LEARNING TO PERCEIVE', 'INTERSTATE NAVIGATION', 'HIGH-SPEED PERCEPTION', 'ENVIRONMENTAL CHALLENGES', 'THE AUTONOMOUS FUTURE'];
       box.innerHTML = `<h3>CHAPTER ${ch} — ${names[ch - 1] ?? ''}${prevComplete ? '' : ' (LOCKED)'}</h3>`;
       for (const m of list) {
         const rec = p.completedMissions[m.id];
@@ -215,6 +216,49 @@ export class MenuSystem {
         btn.disabled = p.credits < s.price || !fits;
         btn.onclick = () => {
           p.credits -= s.price; p.sensorTier = s.tier;
+          save.markDirty(); save.flush(); audio.chime('buy');
+          this.cb.onEquipmentChanged(); this.renderGarage();
+        };
+      }
+      item.appendChild(btn);
+      scol.appendChild(item);
+    }
+
+    /* auxiliary sensor pods: radar / camera / proximity fusion */
+    const auxHead = document.createElement('h3');
+    auxHead.textContent = 'AUX SENSORS — FUSION';
+    auxHead.style.marginTop = '14px';
+    scol.appendChild(auxHead);
+    for (const a of AUX_SENSORS) {
+      const owned = (p.auxSensors ?? []).includes(a.id);
+      const active = (p.activeAux ?? []).includes(a.id);
+      const item = document.createElement('div');
+      item.className = 'shop-item' + (active ? ' active' : '');
+      item.innerHTML = `<h4>${a.name}</h4><div class='desc'>${a.desc}</div>` +
+        `<div class='spec'>${a.maxRange} m · ${a.scanHz} Hz · ${a.immune >= 0.85 ? 'WEATHERPROOF' : a.immune >= 0.5 ? 'WEATHER RESISTANT' : 'NEEDS CLEAR SKIES'}</div>`;
+      const btn = document.createElement('button');
+      btn.className = 'buy-btn';
+      if (active) {
+        btn.textContent = 'ACTIVE — DISABLE';
+        btn.onclick = () => {
+          p.activeAux = (p.activeAux ?? []).filter(x => x !== a.id);
+          save.markDirty(); save.flush(); audio.click();
+          this.cb.onEquipmentChanged(); this.renderGarage();
+        };
+      } else if (owned) {
+        btn.textContent = 'ACTIVATE';
+        btn.onclick = () => {
+          p.activeAux = [...(p.activeAux ?? []), a.id];
+          save.markDirty(); save.flush(); audio.click();
+          this.cb.onEquipmentChanged(); this.renderGarage();
+        };
+      } else {
+        btn.textContent = `BUY — ${a.price.toLocaleString()} CR`;
+        btn.disabled = p.credits < a.price;
+        btn.onclick = () => {
+          p.credits -= a.price;
+          p.auxSensors = [...(p.auxSensors ?? []), a.id];
+          p.activeAux = [...(p.activeAux ?? []), a.id];
           save.markDirty(); save.flush(); audio.chime('buy');
           this.cb.onEquipmentChanged(); this.renderGarage();
         };
@@ -329,6 +373,14 @@ export class MenuSystem {
       d.appendChild(l); d.appendChild(control);
       body.appendChild(d);
     };
+    const section = (label: string) => {
+      const h = document.createElement('h3');
+      h.className = 'set-section';
+      h.textContent = label;
+      body.appendChild(h);
+    };
+
+    section('DISPLAY & PERFORMANCE');
     const sel = document.createElement('select');
     for (const q of ['low', 'medium', 'high', 'ultra']) {
       const o = document.createElement('option');
@@ -353,19 +405,54 @@ export class MenuSystem {
     fovWrap.appendChild(fov); fovWrap.appendChild(fovVal);
     row('CAMERA FIELD OF VIEW', fovWrap);
 
+    section('POINT CLOUD');
     const life = document.createElement('input');
-    life.type = 'range'; life.min = '1'; life.max = '20'; life.step = '0.5';
-    life.value = String(Math.min(20, Math.max(1, typeof p.settings.pointLife === 'number' && isFinite(p.settings.pointLife) ? p.settings.pointLife : 4)));
-    const lifeVal = document.createElement('span'); lifeVal.className = 'val'; lifeVal.textContent = parseFloat(life.value).toFixed(1) + 's';
+    life.type = 'range'; life.min = '1'; life.max = '120'; life.step = '0.5';
+    life.value = String(Math.min(120, Math.max(1, typeof p.settings.pointLife === 'number' && isFinite(p.settings.pointLife) ? p.settings.pointLife : 4)));
+    const lifeVal = document.createElement('span'); lifeVal.className = 'val';
+    const syncLife = () => {
+      const forever = p.settings.pointForever === true;
+      life.disabled = forever;
+      lifeVal.textContent = forever ? '∞' : parseFloat(life.value).toFixed(1) + 's';
+    };
     life.oninput = () => {
       p.settings.pointLife = parseFloat(life.value);
-      lifeVal.textContent = p.settings.pointLife.toFixed(1) + 's';
       save.markDirty(); this.cb.onSettingsChanged();
+      syncLife();
     };
     life.onchange = () => save.flush();
-    const lifeWrap = document.createElement('div'); lifeWrap.style.display = 'flex'; lifeWrap.style.gap = '8px'; lifeWrap.style.alignItems = 'center';
+    const lifeWrap = document.createElement('div'); lifeWrap.className = 'set-inline';
     lifeWrap.appendChild(life); lifeWrap.appendChild(lifeVal);
     row('SCAN PERSISTENCE', lifeWrap);
+
+    const spd = document.createElement('input');
+    spd.type = 'range'; spd.min = '0.25'; spd.max = '4'; spd.step = '0.05';
+    spd.value = String(typeof p.settings.sweepSpeed === 'number' && isFinite(p.settings.sweepSpeed) ? Math.min(4, Math.max(0.25, p.settings.sweepSpeed)) : 1);
+    const spdVal = document.createElement('span'); spdVal.className = 'val';
+    const syncSpd = () => { spdVal.textContent = '×' + parseFloat(spd.value).toFixed(2); };
+    spd.oninput = () => {
+      p.settings.sweepSpeed = parseFloat(spd.value);
+      save.markDirty(); this.cb.onSettingsChanged();
+      syncSpd();
+    };
+    spd.onchange = () => save.flush();
+    const spdWrap = document.createElement('div'); spdWrap.className = 'set-inline';
+    spdWrap.appendChild(spd); spdWrap.appendChild(spdVal);
+    row('SWEEP SPEED (SCAN RATE)', spdWrap);
+    syncSpd();
+
+    const forever = document.createElement('input');
+    forever.type = 'checkbox'; forever.checked = p.settings.pointForever === true;
+    forever.onchange = () => {
+      p.settings.pointForever = forever.checked;
+      save.markDirty(); save.flush(); this.cb.onSettingsChanged();
+      syncLife();
+    };
+    row('POINT CLOUD — KEEP FOREVER', forever);
+    const lifeNote = document.createElement('div');
+    lifeNote.className = 'set-note';
+    lifeNote.textContent = 'How long scanned points stay in the world. "Keep forever" holds the cloud until the point buffer recycles (' + (QUALITY[p.settings.quality]?.maxPoints ?? 0).toLocaleString() + ' pts). Sweep speed multiplies the sensor rotation rate — very high rates are capped by the ray budget of your performance profile.';
+    body.appendChild(lifeNote);
 
     const check = (key: 'labels' | 'minimap' | 'sweep', label: string) => {
       const c = document.createElement('input');
@@ -376,6 +463,56 @@ export class MenuSystem {
     check('labels', 'OBJECT LABELS / BOXES');
     check('minimap', 'SCAN MINIMAP');
     check('sweep', 'SCAN SWEEP EFFECT');
+
+    section('OPERATOR FUNDS');
+    const fundsNote = document.createElement('div');
+    fundsNote.className = 'set-note';
+    fundsNote.textContent = 'Debug controls — set your career resources directly. Changes apply and save immediately.';
+    body.appendChild(fundsNote);
+    const moneyRow = (label: string, key: 'credits' | 'researchData' | 'xp', quick: number[]) => {
+      const wrap = document.createElement('div'); wrap.className = 'set-inline';
+      const inp = document.createElement('input');
+      inp.type = 'number'; inp.min = '0'; inp.step = '1'; inp.className = 'num-in';
+      inp.value = String(Math.max(0, Math.floor((p as any)[key] ?? 0)));
+      const commit = () => {
+        let v = Math.floor(parseFloat(inp.value));
+        if (!isFinite(v) || v < 0) v = 0;
+        (p as any)[key] = v;
+        save.markDirty(); save.flush(); audio.click();
+        this.cb.onProfileEdited();
+      };
+      const setBtn = document.createElement('button'); setBtn.className = 'mini-btn'; setBtn.textContent = 'SET';
+      setBtn.onclick = commit;
+      inp.onkeydown = (ev) => { ev.stopPropagation(); if (ev.key === 'Enter') { inp.blur(); commit(); } };
+      wrap.appendChild(inp); wrap.appendChild(setBtn);
+      for (const q of quick) {
+        const qb = document.createElement('button'); qb.className = 'mini-btn ghost';
+        qb.textContent = '+' + q.toLocaleString();
+        qb.onclick = () => {
+          (p as any)[key] = Math.max(0, Math.floor((p as any)[key] ?? 0)) + q;
+          inp.value = String(Math.floor((p as any)[key]));
+          save.markDirty(); save.flush(); audio.click();
+          this.cb.onProfileEdited();
+        };
+        wrap.appendChild(qb);
+      }
+      row(label, wrap);
+    };
+    moneyRow('CREDITS (MONEY)', 'credits', [10000, 100000]);
+    moneyRow('RESEARCH DATA (RD)', 'researchData', [100, 500]);
+    moneyRow('EXPERIENCE (XP / RANK)', 'xp', [500, 2000]);
+
+    const unlockAll = document.createElement('button');
+    unlockAll.className = 'mini-btn wide';
+    unlockAll.textContent = 'UNLOCK ALL RESEARCH';
+    unlockAll.onclick = () => {
+      let added = 0;
+      for (const r of RESEARCH) if (!p.research.includes(r.id)) { p.research.push(r.id); added++; }
+      save.markDirty(); save.flush();
+      if (added > 0) audio.chime('unlock'); else audio.click();
+      this.cb.onProfileEdited();
+    };
+    row('RESEARCH LAB', unlockAll);
 
     const danger = document.createElement('div');
     danger.className = 'danger-zone';

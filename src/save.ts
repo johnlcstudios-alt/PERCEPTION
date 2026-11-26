@@ -6,6 +6,8 @@ export interface Settings {
   quality: string; volume: number; fov: number; labels: boolean;
   minimap: boolean; minimapSize: string; sweep: boolean; camera: string; invertY: boolean;
   pointLife: number; // seconds scanned points stay visible
+  pointForever: boolean; // never age the cloud out (keeps points until the ring buffer recycles)
+  sweepSpeed: number; // LiDAR scan/rotation rate multiplier (1 = sensor default)
 }
 
 export interface Profile {
@@ -16,6 +18,8 @@ export interface Profile {
   selectedVehicle: string;
   ownedVehicles: string[];
   sensorTier: number;
+  auxSensors: string[];  // owned auxiliary pods (radar / camera / proximity)
+  activeAux: string[];   // currently enabled pods
   upgrades: Record<string, number>;
   research: string[];
   paint: number;
@@ -35,13 +39,15 @@ export function defaultProfile(): Profile {
     selectedVehicle: 'compact',
     ownedVehicles: ['compact'],
     sensorTier: 1,
+    auxSensors: [],
+    activeAux: [],
     upgrades: {},
     research: [],
     paint: 0x2b3540,
     completedMissions: {},
     discoveredLocations: [],
     tutorialDone: false,
-    settings: { quality: 'high', volume: 0.8, fov: 70, labels: true, minimap: true, minimapSize: 'normal', sweep: true, camera: 'chase', invertY: false, pointLife: 4 },
+    settings: { quality: 'high', volume: 0.8, fov: 70, labels: true, minimap: true, minimapSize: 'normal', sweep: true, camera: 'chase', invertY: false, pointLife: 4, pointForever: false, sweepSpeed: 1 },
     stats: { kmDriven: 0, scans: 0, detections: 0, missions: 0, collisions: 0, aeb: 0 }
   };
 }

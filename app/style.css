@@ -157,7 +157,20 @@ body { font-family: var(--font); color: var(--text); user-select: none; }
 .set-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 4px; border-bottom: 1px solid rgba(255,255,255,0.05); }
 .set-row label { font-size: 12.5px; letter-spacing: 1px; }
 .set-row select, .set-row input[type="range"] { accent-color: var(--accent); background: #0b141e; color: var(--text); border: 1px solid var(--panel-border); border-radius: 6px; padding: 4px 8px; font-family: var(--font); }
+.set-row input[type="range"]:disabled { opacity: 0.35; }
+.set-row input[type="checkbox"] { accent-color: var(--accent); width: 17px; height: 17px; cursor: pointer; }
 .set-row .val { font-family: var(--mono); color: var(--accent); min-width: 40px; text-align: right; }
+.set-section { font-size: 10.5px; letter-spacing: 3px; color: var(--accent); opacity: 0.85; margin: 20px 0 4px; padding-bottom: 6px; border-bottom: 1px solid var(--panel-border); }
+.set-section:first-child { margin-top: 0; }
+.set-note { font-size: 10.5px; color: var(--text-dim); letter-spacing: 0.4px; padding: 6px 4px 2px; line-height: 1.5; }
+.set-inline { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.num-in { width: 118px; background: #0b141e; color: var(--accent); border: 1px solid var(--panel-border); border-radius: 6px; padding: 5px 8px; font-family: var(--mono); font-size: 12px; text-align: right; }
+.num-in:focus { outline: none; border-color: var(--accent-dim); }
+.mini-btn { background: rgba(83, 230, 255, 0.08); border: 1px solid var(--accent-dim); color: var(--accent); padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 10.5px; letter-spacing: 1.5px; font-family: var(--font); }
+.mini-btn:hover { background: rgba(83, 230, 255, 0.16); }
+.mini-btn.ghost { padding: 4px 8px; font-size: 9.5px; border-color: rgba(154, 107, 255, 0.35); color: var(--violet); background: rgba(154, 107, 255, 0.06); }
+.mini-btn.ghost:hover { background: rgba(154, 107, 255, 0.14); }
+.mini-btn.wide { padding: 7px 18px; }
 .danger-zone { margin-top: 18px; }
 .danger-zone button { background: rgba(255, 77, 94, 0.08); border: 1px solid rgba(255, 77, 94, 0.4); color: #ff8b96; padding: 8px 16px; border-radius: 8px; cursor: pointer; letter-spacing: 2px; font-size: 11px; }
 

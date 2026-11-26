@@ -42,6 +42,26 @@ fully autonomous machine.
 - **Synthesized audio** — EV drivetrain, scan ticks, detection blips, AEB, collisions and
   weather ambience. No audio assets required.
 
+## Documentation
+
+Full technical documentation lives in [`docs/`](docs/README.md), including the
+[Tech Stack](docs/README.md#tech-stack) overview. Each infrastructure subsystem has its own document:
+
+| Infrastructure | Documentation |
+|----------------|---------------|
+| World simulation & raycasting | [docs/world-engine.md](docs/world-engine.md) |
+| LiDAR pipeline & point-cloud renderer | [docs/lidar-pipeline.md](docs/lidar-pipeline.md) |
+| Perception engine (tracking, road estimation) | [docs/perception.md](docs/perception.md) |
+| Autonomous driving | [docs/autonomy.md](docs/autonomy.md) |
+| Vehicle system | [docs/vehicle.md](docs/vehicle.md) |
+| Missions & economy | [docs/missions-economy.md](docs/missions-economy.md) |
+| HUD, menus & input | [docs/ui.md](docs/ui.md) |
+| Persistence | [docs/persistence.md](docs/persistence.md) |
+| Audio | [docs/audio.md](docs/audio.md) |
+| Build & packaging | [docs/build-packaging.md](docs/build-packaging.md) |
+
+Landing page: [landing/index.html](landing/index.html)
+
 ## Controls
 
 | Key | Action |
@@ -78,6 +98,8 @@ Output lands in `release/`:
 - `win-unpacked/PERCEPTION.exe` — unpacked build
 
 ## Tech notes
+
+See the full [Tech Stack](docs/README.md#tech-stack) table in the documentation.
 
 - **Engine:** three.js (WebGL) point-cloud rendering with a custom shader
   (ring-buffered positions, per-point age fade, mode-based GPU colorization).

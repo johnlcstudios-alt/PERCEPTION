@@ -93,19 +93,22 @@ const GRID_HALF = GRID_N / 2;
 
 export class World {
   objects: WorldObject[] = [];
-  private staticHeads: Int32Array;
-  private dynHeads: Int32Array;
-  private objNext: Int32Array;
-  private objCell: Int32Array; // primary cell per object (dynamics re-registration)
+  private staticHeads: Int32Array;  // cell -> slot (edge list)
+  private dynHeads: Int32Array;     // cell -> slot (rebuilt each frame)
+  private objNext: Int32Array;      // slot -> next slot
+  private objSlot: Int32Array;      // slot -> object id
+  private objCell: Int32Array;      // primary cell per object (dynamics re-registration)
   private dynList: number[] = [];
+  private staticSlot = 0;
+  private dynSlot = 0;
   private staticCount = 0;
   private groupMap = new Map<string, WorldObject>();
   private hit: RayHit = { t: 0, obj: null, nx: 0, ny: 0, nz: 0, gx: 0, gy: 0, gz: 0, mat: 0 };
 
   roads: RoadSeg[] = [];
   nodes: RoadNode[] = [];
-  private roadIndex: Int32Array;      // cell -> road list head
-  private roadNext: Int32Array;       // segment next index
+  private roadIndex: Int32Array;      // cell -> packed road entry
+  private roadNext: Int32Array;       // edge list: (segment, cell) pairs
   private groundSeed = 1337;
 
   agents: Agent[] = [];
@@ -119,7 +122,8 @@ export class World {
   constructor(seed = 20261126) {
     this.staticHeads = new Int32Array(GRID_N * GRID_N).fill(-1);
     this.dynHeads = new Int32Array(GRID_N * GRID_N).fill(-1);
-    this.objNext = new Int32Array(65536);
+    this.objNext = new Int32Array(1 << 20);
+    this.objSlot = new Int32Array(1 << 20);
     this.objCell = new Int32Array(65536);
     this.roadIndex = new Int32Array(GRID_N * GRID_N).fill(-1);
     this.roadNext = new Int32Array(262144); /* edge list: (segment, cell) pairs */
@@ -171,9 +175,12 @@ export class World {
     this.objCell[id] = this.cellIdx(o.x, o.z);
     for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
       if (c < 0 || r < 0 || c >= GRID_N || r >= GRID_N) continue;
+      if (this.staticSlot >= this.objNext.length) return; /* edge list full — fail safe */
       const cell = r * GRID_N + c;
-      this.objNext[id] = this.staticHeads[cell];
-      this.staticHeads[cell] = id;
+      const slot = this.staticSlot++;
+      this.objSlot[slot] = id;
+      this.objNext[slot] = this.staticHeads[cell];
+      this.staticHeads[cell] = slot;
       this.staticCount++;
     }
   }
@@ -354,6 +361,7 @@ export class World {
 
   refreshDynamicGrid() {
     this.dynHeads.fill(-1);
+    this.dynSlot = 0;
     for (const id of this.dynList) {
       const o = this.objects[id];
       const [x0, x1, z0, z1] = this.objAABB(o);
@@ -361,9 +369,12 @@ export class World {
       const r0 = Math.floor(z0 / WORLD.gridCell + GRID_HALF), r1 = Math.floor(z1 / WORLD.gridCell + GRID_HALF);
       for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
         if (c < 0 || r < 0 || c >= GRID_N || r >= GRID_N) continue;
+        if (this.dynSlot >= this.objNext.length) break; /* edge list full */
         const cell = r * GRID_N + c;
-        this.objNext[id] = this.dynHeads[cell];
-        this.dynHeads[cell] = id;
+        const slot = this.dynSlot++;
+        this.objSlot[slot] = id;
+        this.objNext[slot] = this.dynHeads[cell];
+        this.dynHeads[cell] = slot;
       }
     }
   }

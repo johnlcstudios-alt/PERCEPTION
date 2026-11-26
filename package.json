@@ -1,0 +1,62 @@
+{
+  "name": "perception",
+  "productName": "PERCEPTION",
+  "version": "1.0.0",
+  "description": "PERCEPTION - A LiDAR Driving Simulator. You don't see the road. You understand it.",
+  "main": "electron/main.cjs",
+  "author": "JohnLC Studios Open Source Softwares",
+  "license": "MIT",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "electron .",
+    "dev": "node build.mjs && electron .",
+    "dist": "node build.mjs && electron-builder --win --x64"
+  },
+  "dependencies": {
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.24.0"
+  },
+  "build": {
+    "appId": "com.johnlcstudios.perception",
+    "productName": "PERCEPTION",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "dist/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "portable": {
+      "artifactName": "PERCEPTION-Portable-${version}.exe"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "PERCEPTION-Setup-${version}.exe"
+    }
+  }
+}

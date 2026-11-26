@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PERCEPTION — A LiDAR Driving Simulator</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <canvas id="gl"></canvas>
+
+  <!-- ============ DRIVING HUD ============ -->
+  <div id="hud" class="hidden">
+    <div id="hud-top">
+      <div class="panel" id="sensor-panel">
+        <div class="panel-title">SENSOR</div>
+        <div class="kv"><span id="s-model">LDR-100</span></div>
+        <div class="kv"><span>SCAN</span><b id="s-hz">10.0 Hz</b></div>
+        <div class="kv"><span>RANGE</span><b id="s-range">60 m</b></div>
+        <div class="kv"><span>DENSITY</span><b id="s-density">0 pts/s</b></div>
+        <div class="kv"><span>TRACKS</span><b id="s-tracks">0</b></div>
+        <div class="kv"><span>LATENCY</span><b id="s-latency">130 ms</b></div>
+        <div class="kv"><span>MODE</span><b id="s-viz">POINT CLOUD</b></div>
+      </div>
+      <div id="warnings" class="warnings"></div>
+      <div class="panel" id="env-panel">
+        <div class="panel-title">ENVIRONMENT</div>
+        <div class="kv"><span>WEATHER</span><b id="e-weather">CLEAR</b></div>
+        <div class="kv"><span>TIME</span><b id="e-time">08:00</b></div>
+        <div class="kv"><span>DISTRICT</span><b id="e-district">FACILITY</b></div>
+      </div>
+    </div>
+
+    <div id="hud-left">
+      <div class="panel" id="vehicle-panel">
+        <div class="panel-title">VEHICLE</div>
+        <div id="speedo"><span id="v-speed">0</span><small> m/s</small></div>
+        <div class="kv"><span>DRIVE</span><b id="v-gear">D</b></div>
+        <div class="kv"><span>BATTERY</span><b id="v-batt">100%</b></div>
+        <div class="bar"><div id="v-batt-bar"></div></div>
+        <div class="kv"><span>CONDITION</span><b id="v-dmg">100%</b></div>
+        <div class="bar"><div id="v-dmg-bar"></div></div>
+      </div>
+      <div class="panel" id="auto-panel">
+        <div class="panel-title">AUTONOMY</div>
+        <div class="kv"><span>MODE</span><b id="a-mode">0 MANUAL</b></div>
+        <div class="kv"><span>STATUS</span><b id="a-status">STANDBY</b></div>
+        <div class="kv"><span>ROUTE</span><b id="a-route">—</b></div>
+      </div>
+    </div>
+
+    <div id="hud-right">
+      <div class="panel" id="objects-panel">
+        <div class="panel-title">DETECTED OBJECTS</div>
+        <div id="object-list"><div class="obj-empty">NO TRACKS</div></div>
+      </div>
+    </div>
+
+    <div id="hud-bottom">
+      <div class="panel" id="mission-panel">
+        <div class="panel-title" id="m-title">FREE ROAM</div>
+        <div id="m-objective">Explore freely. Press M for the map.</div>
+        <div id="m-progress"></div>
+      </div>
+      <div class="panel" id="nav-panel">
+        <div class="panel-title">NAVIGATION</div>
+        <div class="kv"><span>DEST</span><b id="n-dest">—</b></div>
+        <div class="kv"><span>DIST</span><b id="n-dist">—</b></div>
+      </div>
+    </div>
+
+    <canvas id="minimap" width="220" height="220"></canvas>
+    <div id="viz-hint"></div>
+    <div id="tutorial-tip" class="hidden"></div>
+  </div>
+
+  <!-- ============ MAP OVERLAY ============ -->
+  <div id="map-overlay" class="hidden">
+    <div class="map-frame">
+      <canvas id="bigmap" width="900" height="900"></canvas>
+      <div class="map-hint">CLICK — SET AUTONOMY DESTINATION&nbsp;&nbsp;·&nbsp;&nbsp;M / ESC — CLOSE</div>
+    </div>
+  </div>
+
+  <!-- ============ MAIN MENU ============ -->
+  <div id="menu-screen" class="screen">
+    <div class="menu-bg"></div>
+    <div class="menu-inner">
+      <div class="menu-brand">
+        <div class="menu-logo">PERCEPTION</div>
+        <div class="menu-tag">YOU DON'T SEE THE ROAD. YOU UNDERSTAND IT.</div>
+        <div class="menu-sub">A LiDAR DRIVING SIMULATOR</div>
+      </div>
+      <div class="menu-buttons" id="main-buttons">
+        <button data-action="continue">CONTINUE</button>
+        <button data-action="career">CAREER</button>
+        <button data-action="freeroam">FREE ROAM</button>
+        <button data-action="garage">GARAGE</button>
+        <button data-action="research">RESEARCH LAB</button>
+        <button data-action="settings">SETTINGS</button>
+        <button data-action="about">ABOUT</button>
+      </div>
+      <div class="menu-profile" id="menu-profile"></div>
+      <div class="menu-studio">JOHNLC STUDIOS OSS</div>
+    </div>
+  </div>
+
+  <!-- ============ CAREER ============ -->
+  <div id="career-screen" class="screen hidden">
+    <div class="screen-inner">
+      <div class="screen-head"><button class="back" data-back>&larr;</button><h2>CAREER</h2><div class="head-info" id="career-info"></div></div>
+      <div id="chapters"></div>
+    </div>
+  </div>
+
+  <!-- ============ GARAGE ============ -->
+  <div id="garage-screen" class="screen hidden">
+    <div class="screen-inner">
+      <div class="screen-head"><button class="back" data-back>&larr;</button><h2>GARAGE</h2><div class="head-info" id="garage-info"></div></div>
+      <div class="garage-cols">
+        <div class="garage-col" id="garage-vehicles"><h3>VEHICLES</h3></div>
+        <div class="garage-col" id="garage-sensors"><h3>LiDAR SENSORS</h3></div>
+        <div class="garage-col" id="garage-upgrades"><h3>UPGRADES</h3></div>
+        <div class="garage-col" id="garage-style"><h3>CUSTOMIZATION</h3></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ RESEARCH ============ -->
+  <div id="research-screen" class="screen hidden">
+    <div class="screen-inner">
+      <div class="screen-head"><button class="back" data-back>&larr;</button><h2>RESEARCH LAB</h2><div class="head-info" id="research-info"></div></div>
+      <div id="research-list"></div>
+    </div>
+  </div>
+
+  <!-- ============ SETTINGS ============ -->
+  <div id="settings-screen" class="screen hidden">
+    <div class="screen-inner narrow">
+      <div class="screen-head"><button class="back" data-back>&larr;</button><h2>SETTINGS</h2></div>
+      <div id="settings-body"></div>
+    </div>
+  </div>
+
+  <!-- ============ ABOUT ============ -->
+  <div id="about-screen" class="screen hidden">
+    <div class="screen-inner narrow">
+      <div class="screen-head"><button class="back" data-back>&larr;</button><h2>ABOUT</h2></div>
+      <div class="about-body">
+        <p class="about-logo">PERCEPTION</p>
+        <p>You don't see the road. You understand it.</p>
+        <p>A LiDAR driving simulator. The world is fully modeled in 3D, but you perceive it
+        only through a simulated scanning LiDAR: point clouds, detection, tracking and
+        progressive autonomy.</p>
+        <p>Version 1.0 — <b>JohnLC Studios OSS</b> — MIT License</p>
+        <p class="about-small">All sensor product names are fictional game equipment.
+        Driving assistance levels are fictional game progression, not real-world automotive classifications.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ PAUSE ============ -->
+  <div id="pause-screen" class="screen hidden">
+    <div class="pause-inner">
+      <div class="pause-title">PAUSED</div>
+      <div class="menu-buttons">
+        <button data-action="resume">RESUME</button>
+        <button data-action="restart">RESTART MISSION</button>
+        <button data-action="abort">ABORT TO MENU</button>
+        <button data-action="settings-pause">SETTINGS</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ RESULTS ============ -->
+  <div id="results-screen" class="screen hidden">
+    <div class="results-inner">
+      <div class="results-rating" id="r-rating">S</div>
+      <div class="results-title" id="r-title">MISSION COMPLETE</div>
+      <div class="results-grid" id="r-grid"></div>
+      <div class="results-buttons">
+        <button data-action="results-continue">CONTINUE</button>
+        <button data-action="results-retry">RETRY MISSION</button>
+        <button data-action="results-menu">MAIN MENU</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+</div>
+<script src="game.js"></script>
+</body>
+</html>

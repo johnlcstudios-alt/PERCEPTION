@@ -1,6 +1,10 @@
-# PERCEPTION
+<p align="center">
+  <img src="docs/logo.png" alt="PERCEPTION logo" width="180" height="180">
+</p>
 
-**A LiDAR Driving Simulator** — *The world is invisible. Your sensors are your eyes.*
+<h1 align="center">PERCEPTION</h1>
+
+<p align="center"><strong>A LiDAR Driving Simulator</strong> — <em>The world is invisible. Your sensors are your eyes.</em></p>
 
 You don't see the road. You understand it.
 
@@ -12,6 +16,19 @@ earn credits and research data, and upgrade your vehicle from a basic sensor pla
 fully autonomous machine.
 
 ![gameplay](docs/screenshot.png)
+
+## Download
+
+Prebuilt Windows x64 executables are attached to the
+[latest release](https://github.com/johnlcstudios-alt/PERCEPTION/releases/latest):
+
+| File | Description |
+|------|-------------|
+| `PERCEPTION-Setup-1.4.0.exe` | One-click installer (NSIS, per-user) |
+| `PERCEPTION-Portable-1.4.0.exe` | Portable single-file executable, no install required |
+
+To run from source or build the executables yourself, see
+[Run from source](#run-from-source) and [Build the Windows .exe](#build-the-windows-exe).
 
 ## Features
 
@@ -93,8 +110,8 @@ npm run dist     # bundles renderer, then electron-builder --win --x64
 
 Output lands in `release/`:
 
-- `PERCEPTION-Setup-1.0.0.exe` — installer (NSIS)
-- `PERCEPTION-Portable-1.0.0.exe` — portable single-file executable
+- `PERCEPTION-Setup-1.4.0.exe` — installer (NSIS)
+- `PERCEPTION-Portable-1.4.0.exe` — portable single-file executable
 - `win-unpacked/PERCEPTION.exe` — unpacked build
 
 ## Tech notes

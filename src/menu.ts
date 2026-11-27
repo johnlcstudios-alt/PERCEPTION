@@ -477,6 +477,7 @@ export class MenuSystem {
       const commit = () => {
         let v = Math.floor(parseFloat(inp.value));
         if (!isFinite(v) || v < 0) v = 0;
+        if (v > 999999999999) v = 999999999999; /* keep save numbers sane */
         (p as any)[key] = v;
         save.markDirty(); save.flush(); audio.click();
         this.cb.onProfileEdited();
